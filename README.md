@@ -4,7 +4,7 @@ This repository contains the codebase for our Machine Learning course final proj
 
 ## 📂 Repository Structure
 
-* `data/`: (Not tracked by Git) Will contain the cleaned local CSV files (e.g., Philadelphia restaurant data).
+* `data/`: (Not tracked by Git) Will contain the cleaned local CSV files (e.g., NYC restaurant data).
 * `notebooks/`: Jupyter notebooks for data exploration, MVP testing, and baseline model verification.
 * `models/`: Core algorithmic implementations, including from-scratch K-Means and retrieval logic.
 * `app/`: Streamlit frontend code for the user interface.
