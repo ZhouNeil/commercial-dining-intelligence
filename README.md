@@ -19,3 +19,8 @@ We use `uv` for lightning-fast dependency management. To run this project locall
 This script will install `uv` (if necessary), create a virtual environment (`.venv`), and install all dependencies from `requirements.txt`.
 ```bash
 source scripts/setup_env.sh
+
+**2. Activate Environment (Run every time you code):**
+Whenever you open a new terminal session to work on this project, activate the environment by running:
+```bash
+source scripts/activate_env.sh
