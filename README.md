@@ -54,3 +54,23 @@ Whenever you open a new terminal session to work on this project, activate the e
 ```bash
 source scripts/activate_env.sh
 ```
+
+If you do not want to use `uv`, you can also install dependencies with pip:
+
+```bash
+pip install -r requirements.txt
+```
+
+## Starting the App
+
+Make sure you have the cleaned CSVs under `data/cleaned/`:
+- `business_dining.csv`
+- `review_dining.csv`
+
+On the first run, the app builds the retrieval index under `models/artifacts/` (may take a while).
+
+Run Streamlit:
+
+```bash
+streamlit run app/main.py
+```
