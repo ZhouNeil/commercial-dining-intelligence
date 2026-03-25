@@ -16,7 +16,7 @@ This repository contains the codebase for our Machine Learning course final proj
 Due to the massive size of the Yelp Open Dataset, raw and cleaned data files are **not** tracked in this GitHub repository. To run this project, you must manually download the required CSV files.
 
 **1. Download the Data:**
-* Fetch the cleaned dataset (e.g., `cleaned_philly_restaurants.csv`) from our team's shared Google Drive: `https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing`
+* Fetch the cleaned dataset (e.g., `cleaned_philly_restaurants.csv`) from our team's shared Google Drive: [`https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing`](https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing)
 
 **2. Place it in the Repo:**
 * Move the downloaded files directly into the `data/` folder at the root of this project. 
@@ -27,7 +27,7 @@ commercial-dining-intelligence/
 ├── app/
 ├── data/
 │   ├── .gitkeep
-│   └── philly_restaurants_clean.csv   <-- (Place your data here!)
+│   └── cleaned_philly_restaurants.csv   <-- (Place your data here!)
 ├── models/
 ├── notebooks/
 ├── scripts/
