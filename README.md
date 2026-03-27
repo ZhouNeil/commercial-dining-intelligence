@@ -4,38 +4,38 @@ This repository contains the codebase for our Machine Learning course final proj
 
 ## 📂 Repository Structure
 
-* `app/`: Streamlit frontend code for the user interface.
-* `data/`: (Not tracked by Git) Will contain the cleaned local CSV files (e.g., Philadelphia restaurant data).
-* `models/`: Core algorithmic implementations, including from-scratch K-Means and retrieval logic.
-* `notebooks/`: Jupyter notebooks for data exploration, MVP testing, and baseline model verification.
-* `scripts/`: Shell scripts for environment setup and activation.
-* `requirements.txt`: Project dependencies (managed via `uv`).
+Our codebase strictly follows the Separation of Concerns (SoC) principle. The directory tree below outlines our modular architecture:
+
+```text
+commercial-dining-intelligence/
+├── app/                        # Streamlit UI (main dashboard and visual components)
+│   ├── main.py                 # Dual-mode web app entry point (Role 5)
+│   └── components.py           # Reusable UI widgets like maps and charts (Role 5)
+├── data/                       # Local storage for cleaned feature CSVs (Git-ignored)
+├── pipelines/                  # Data engineering and feature extraction
+│   ├── data_cleaner.py         # Transforms raw data into numerical matrices (Role 1)
+│   └── feature_pca.py          # Applies PCA for business DNA extraction (Role 6)
+├── models/                     # Core ML algorithms and predictive engines
+│   ├── kmeans_scratch.py       # Pure NumPy K-Means clustering algorithm (Role 2)
+│   ├── tourist_recommender.py  # Tourist Mode embedding & semantic search (Role 3)
+│   ├── merchant_predictor.py   # Merchant Mode survival/rating prediction (Role 4)
+│   └── rl_feedback_loop.py     # Reinforcement Learning & A/B testing weights (Role 6)
+├── notebooks/                  # Jupyter notebooks for EDA and MVP testing
+├── scripts/                    # Shell scripts for environment setup
+├── .gitignore                  # Prevents data/ and .venv/ from being tracked
+├── README.md                   # Project architecture and setup instructions
+└── requirements.txt            # Locked dependency registry for CI/CD
+```
 
 ## 📥 Data Setup
 
 Due to the massive size of the Yelp Open Dataset, raw and cleaned data files are **not** tracked in this GitHub repository. To run this project, you must manually download the required CSV files.
 
 **1. Download the Data:**
-* Fetch the cleaned dataset (e.g., `cleaned_philly_restaurants.csv`) from our team's shared Google Drive: [`https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing`](https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing)
+* Fetch the dataset from our team's shared Google Drive: [`https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing`](https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing)
 
 **2. Place it in the Repo:**
-* Move the downloaded files directly into the `data/` folder at the root of this project. 
-* Your local directory structure should look exactly like this before running any scripts:
-
-```text
-commercial-dining-intelligence/
-├── app/
-├── data/
-│   ├── .gitkeep
-│   └── cleaned_philly_restaurants.csv   <-- (Place your data here!)
-├── models/
-├── notebooks/
-├── scripts/
-├── .gitignore
-├── README.md
-└── requirements.txt
-```
-*Note: The `data/` directory is intentionally ignored by `.gitignore` to prevent large files from crashing the repository. Please do not force-add data files to Git.*
+* Move the downloaded files directly into the `data/` folder. Do not force-add data files to Git.
 
 ## 🚀 Setup Environment
 
