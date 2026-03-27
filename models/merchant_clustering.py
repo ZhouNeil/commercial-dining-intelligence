@@ -60,8 +60,8 @@ def generate_cluster_map(df_clustered):
         # Enhanced Tooltip for the UI
         tooltip_html = f"""
         <b>Cluster ID:</b> {cluster_idx}<br>
-        <b>Avg Stars:</b> {row['stars']:.1f}<br>
-        <b>Reviews (Log):</b> {row['review_count']:.2f}
+        <b>Shop Rating:</b> {row['stars']:.1f}<br>
+        <b>Shop Reviews (Log):</b> {row['review_count']:.2f}
         """
         
         folium.CircleMarker(
