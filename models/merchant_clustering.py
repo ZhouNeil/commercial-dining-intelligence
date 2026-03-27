@@ -1,4 +1,3 @@
-import ast
 import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans
@@ -7,66 +6,73 @@ from sklearn.decomposition import PCA
 import folium
 
 
-def extract_price(attr_str):
-    """Extract RestaurantsPriceRange2 from the raw attributes column."""
-    if pd.isna(attr_str) or str(attr_str).strip() in ["{}", "None", "", "nan"]:
-        return 2
-    try:
-        attr_dict = ast.literal_eval(attr_str) if isinstance(attr_str, str) else attr_str
-        if not isinstance(attr_dict, dict):
-            return 2
-        price = attr_dict.get('RestaurantsPriceRange2')
-        if price is None or str(price).strip().lower() in ['none', 'nan', '']:
-            return 2
-        return int(price)
-    except Exception:
-        return 2
+REQUIRED_READY_COLS = [
+    'latitude', 'longitude', 'stars', 'review_count', 'price_range',
+    'PC1_Cafe_Score', 'PC2_Nightlife_Score', 'PC3_Brunch_Score', 'PC4_Pizza_Score'
+]
+
+REQUIRED_BASE_COLS = ['latitude', 'longitude', 'stars', 'review_count']
+REQUIRED_PRICE_COL = 'attr_restaurantspricerange2'
 
 
 def build_kmeans_ready_features_from_output(df_raw):
     """
-    Build the same 9-column feature matrix as kmeans_ready_features.csv
-    directly from output_philly.csv.
+    Build the 9-column k-means feature matrix directly from output_philly.csv.
 
-    Uses existing cat_ columns when available, which is cleaner and more robust
-    than reparsing the categories string column.
+    Strict mode:
+    - only uses pre-split attr_ columns for price_range
+    - only uses pre-split cat_ columns for category PCA
+    - raises explicit errors when required columns are missing or invalid
     """
     df = df_raw.copy()
 
-    # 1) price_range
-    if 'price_range' not in df.columns:
-        if 'attr_restaurantspricerange2' in df.columns:
-            # Prefer pre-split attribute column if present
-            df['price_range'] = pd.to_numeric(df['attr_restaurantspricerange2'], errors='coerce').fillna(2).astype(int)
-        elif 'attributes' in df.columns:
-            df['price_range'] = df['attributes'].apply(extract_price)
-        else:
-            df['price_range'] = 2
+    # 1) validate base columns
+    missing_base_cols = [c for c in REQUIRED_BASE_COLS if c not in df.columns]
+    if missing_base_cols:
+        raise ValueError(
+            f"Missing required base columns in output data: {missing_base_cols}"
+        )
 
-    # 2) category PCA input
+    # 2) validate and build price_range from pre-split attr_ column only
+    if REQUIRED_PRICE_COL not in df.columns:
+        raise ValueError(
+            f"Missing required price column in output data: {REQUIRED_PRICE_COL}"
+        )
+
+    price_range = pd.to_numeric(df[REQUIRED_PRICE_COL], errors='coerce')
+    if price_range.isna().any():
+        bad_count = int(price_range.isna().sum())
+        raise ValueError(
+            f"Column {REQUIRED_PRICE_COL} contains {bad_count} null or non-numeric values. "
+            "Please fix this in the upstream feature pipeline before clustering."
+        )
+    df['price_range'] = price_range.astype(int)
+
+    # 3) validate and build category PCA from pre-split cat_ columns only
     cat_cols = [c for c in df.columns if c.startswith('cat_')]
-    if cat_cols:
-        cat_matrix = df[cat_cols].fillna(0)
-    else:
-        # Fallback: parse raw categories string if cat_ columns do not exist
-        categories = df.get('categories', pd.Series('', index=df.index)).fillna('').astype(str).str.lower()
-        cat_matrix = categories.str.get_dummies(sep=', ')
+    if not cat_cols:
+        raise ValueError(
+            "No pre-split category columns found. Expected columns with prefix 'cat_'."
+        )
 
-    # Ensure numeric matrix
-    cat_matrix = cat_matrix.apply(pd.to_numeric, errors='coerce').fillna(0)
+    cat_matrix = df[cat_cols].apply(pd.to_numeric, errors='coerce')
+    if cat_matrix.isna().any().any():
+        bad_cols = cat_matrix.columns[cat_matrix.isna().any()].tolist()
+        raise ValueError(
+            f"Some cat_ columns contain null or non-numeric values: {bad_cols}. "
+            "Please fix this in the upstream feature pipeline before clustering."
+        )
 
-    # PCA with up to 4 components
-    n_components = min(4, cat_matrix.shape[1])
-    if n_components == 0:
-        pca_scores = np.zeros((len(df), 4))
-    else:
+    # PCA requires n_components <= min(n_samples, n_features)
+    n_samples = len(df)
+    n_features = cat_matrix.shape[1]
+    n_components = min(4, n_samples, n_features)
+
+    pca_scores = np.zeros((len(df), 4))
+    if n_components > 0:
         pca = PCA(n_components=n_components, random_state=42)
         transformed = pca.fit_transform(cat_matrix)
-        if n_components < 4:
-            pca_scores = np.zeros((len(df), 4))
-            pca_scores[:, :n_components] = transformed
-        else:
-            pca_scores = transformed
+        pca_scores[:, :n_components] = transformed
 
     df_pca = pd.DataFrame(
         pca_scores,
@@ -79,11 +85,19 @@ def build_kmeans_ready_features_from_output(df_raw):
         index=df.index,
     )
 
-    # 3) final 9-column feature matrix
-    base_features = df[['latitude', 'longitude', 'stars', 'review_count', 'price_range']].copy()
+    # 4) final 9-column feature matrix with explicit validation
+    required_cols = ['latitude', 'longitude', 'stars', 'review_count', 'price_range']
+    missing_cols = [c for c in required_cols if c not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Missing required columns for k-means features: {', '.join(missing_cols)}"
+        )
+
+    base_features = df[required_cols].copy()
     df_kmeans_ready = pd.concat([base_features, df_pca], axis=1)
 
     return df_kmeans_ready
+
 
 
 def load_and_preprocess_data(file_path):
@@ -91,31 +105,24 @@ def load_and_preprocess_data(file_path):
     Step 1: Load data and prepare the scaled feature matrix X_scaled.
 
     Supports both:
-    - output_philly.csv (raw engineered dataset with cat_ columns)
+    - output_philly.csv (strictly requires pre-split attr_ and cat_ columns)
     - kmeans_ready_features.csv (already prepared 9-column dataset)
     """
     df = pd.read_csv(file_path)
 
-    # If raw output file is given, construct the 9-column kmeans-ready matrix first
-    required_ready_cols = [
-        'latitude', 'longitude', 'stars', 'review_count', 'price_range',
-        'PC1_Cafe_Score', 'PC2_Nightlife_Score', 'PC3_Brunch_Score', 'PC4_Pizza_Score'
-    ]
-    if not all(col in df.columns for col in required_ready_cols):
+    if not all(col in df.columns for col in REQUIRED_READY_COLS):
         df = build_kmeans_ready_features_from_output(df)
 
-    features = required_ready_cols
-
-    missing_features = [col for col in features if col not in df.columns]
+    missing_features = [col for col in REQUIRED_READY_COLS if col not in df.columns]
     if missing_features:
         raise ValueError(
             f"Input data is missing required columns: {missing_features}. "
             f"Available columns: {list(df.columns)}"
         )
 
-    df = df[features].dropna().copy()
+    df = df[REQUIRED_READY_COLS].dropna().copy()
 
-    # Handle extreme values (Long-tail distribution of reviews)
+    # Handle extreme values (long-tail distribution of reviews)
     df['review_count'] = np.log1p(df['review_count'])
 
     # Scale all 9 clustering features, including price_range
@@ -123,6 +130,7 @@ def load_and_preprocess_data(file_path):
     X_scaled = scaler.fit_transform(df)
 
     return df, X_scaled
+
 
 
 def run_kmeans_clustering(df, X_scaled, n_clusters=4):
@@ -137,6 +145,7 @@ def run_kmeans_clustering(df, X_scaled, n_clusters=4):
     cluster_summary = df_clustered.groupby('cluster').mean()
 
     return df_clustered, cluster_summary
+
 
 
 def generate_cluster_map(df_clustered):
@@ -172,6 +181,7 @@ def generate_cluster_map(df_clustered):
         ).add_to(m)
 
     return m
+
 
 
 def generate_business_insight(cluster_summary, target_category='PC4_Pizza_Score'):
@@ -217,3 +227,5 @@ if __name__ == "__main__":
 
     except FileNotFoundError:
         print(f"Error: Please make sure '{test_file_path}' is in the same folder, or update the path.")
+
+
