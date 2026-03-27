@@ -16,6 +16,15 @@ def load_and_preprocess_data(file_path):
         'latitude', 'longitude', 'stars', 'review_count',
         'PC1_Cafe_Score', 'PC2_Nightlife_Score', 'PC3_Brunch_Score', 'PC4_Pizza_Score'
     ]
+    
+    # Validate that all required feature columns are present before subsetting
+    missing_features = [col for col in features if col not in df.columns]
+    if missing_features:
+        raise ValueError(
+            f"Input data is missing required columns: {missing_features}. "
+            f"Available columns: {list(df.columns)}"
+        )
+    
     df = df[features].dropna()
     
     # Handle extreme values (Long-tail distribution of reviews)
