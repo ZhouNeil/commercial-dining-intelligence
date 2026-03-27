@@ -1,12 +1,10 @@
-import numpy as np
+"""
+Backward-compatible re-export.
 
-class TouristRetrieval:
-    """
-    Handles similarity search for personalized restaurant recommendations.
-    """
-    def __init__(self):
-        pass
-        
-    def get_recommendations(self, user_vector, top_k=5):
-        # Placeholder for distance calculation (e.g., Cosine Similarity)
-        pass
+The recommendation retrieval logic now lives in `app/retrieval.py` so the Streamlit MVP
+can keep all app-related code under one folder.
+"""
+
+from app.retrieval import RestaurantSearchIndex, TouristRetrieval
+
+__all__ = ["RestaurantSearchIndex", "TouristRetrieval"]
