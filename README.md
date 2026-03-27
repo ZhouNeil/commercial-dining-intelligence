@@ -32,7 +32,7 @@ commercial-dining-intelligence/
 Due to the massive size of the Yelp Open Dataset, raw and cleaned data files are **not** tracked in this GitHub repository. To run this project, you must manually download the required CSV files.
 
 **1. Download the Data:**
-* Fetch the dataset from our team's shared Google Drive: [`https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing`](https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing)
+* Fetch the cleaned dataset (e.g., `output_philly.csv`) from our team's shared Google: [`https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing`](https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing)
 
 **2. Place it in the Repo:**
 * Move the downloaded files directly into the `data/` folder. Do not force-add data files to Git.
