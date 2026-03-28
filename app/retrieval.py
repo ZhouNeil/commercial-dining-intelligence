@@ -55,7 +55,7 @@ class TouristRetrieval:
         self.max_features = max_features
         self.random_state = random_state
         # Bump this whenever retrieval/index-building logic changes meaningfully.
-        self.index_version = 2
+        self.index_version = 3
 
     @property
     def business_path(self) -> Path:
@@ -142,10 +142,24 @@ class TouristRetrieval:
         # Collect review texts per restaurant.
         # Note: we read in chunks to avoid loading the whole review_dining.csv.
         selected_set = set(business_ids.tolist())
-        text_bank: dict[str, list[str]] = {bid: [] for bid in selected_set}
+        # Split reviews by sentiment (positive/negative) and extract themes.
+        pos_text_bank: dict[str, list[str]] = {bid: [] for bid in selected_set}
+        neg_text_bank: dict[str, list[str]] = {bid: [] for bid in selected_set}
         cat_bank: dict[str, str] = {}
+        name_bank: dict[str, str] = {}
+        city_bank: dict[str, str] = {}
+        state_bank: dict[str, str] = {}
+        attrs_bank: dict[str, str] = {}
         if "categories" in business_df.columns:
             cat_bank = business_df.set_index("business_id")["categories"].fillna("").astype(str).to_dict()
+        if "name" in business_df.columns:
+            name_bank = business_df.set_index("business_id")["name"].fillna("").astype(str).to_dict()
+        if "city" in business_df.columns:
+            city_bank = business_df.set_index("business_id")["city"].fillna("").astype(str).to_dict()
+        if "state" in business_df.columns:
+            state_bank = business_df.set_index("business_id")["state"].fillna("").astype(str).to_dict()
+        if "attributes" in business_df.columns:
+            attrs_bank = business_df.set_index("business_id")["attributes"].fillna("").astype(str).to_dict()
 
         chunksize = 100_000
         for chunk in pd.read_csv(self.review_path, chunksize=chunksize):
@@ -154,30 +168,58 @@ class TouristRetrieval:
             if chunk.empty:
                 continue
 
-            # Append texts, up to limit
-            # We keep it simple: join raw text; TF-IDF handles tokenization.
-            for bid, txt in zip(chunk["business_id"].astype(str).values, chunk["text"].values):
-                if len(text_bank[bid]) >= self.max_reviews_per_business:
-                    continue
-                if isinstance(txt, str) and txt.strip():
-                    text_bank[bid].append(txt)
+            # Append texts by sentiment up to per-restaurant limits.
+            # Positive: stars >= 4 ; Negative: stars <= 2
+            pos_limit = max(1, self.max_reviews_per_business // 2)
+            neg_limit = max(1, self.max_reviews_per_business - pos_limit)
 
-            # Early stop if all filled
-            done = all(len(v) >= min(3, self.max_reviews_per_business) for v in text_bank.values())
+            for bid, txt, stars in zip(
+                chunk["business_id"].astype(str).values,
+                chunk["text"].values,
+                chunk["stars"].values if "stars" in chunk.columns else [None] * len(chunk),
+            ):
+                if not isinstance(txt, str) or not txt.strip():
+                    continue
+                try:
+                    s = float(stars)
+                except Exception:
+                    continue
+
+                if s >= 4.0:
+                    if len(pos_text_bank[bid]) < pos_limit:
+                        pos_text_bank[bid].append(txt)
+                elif s <= 2.0:
+                    if len(neg_text_bank[bid]) < neg_limit:
+                        neg_text_bank[bid].append(txt)
+
+            # Early stop when each restaurant has enough total sentiment text.
+            min_total = min(3, self.max_reviews_per_business)
+            done = all((len(pos_text_bank[bid]) + len(neg_text_bank[bid])) >= min_total for bid in selected_set)
             if done:
                 break
 
-        # Final docs in the same order as business_ids
+        # Final docs in the same order as business_ids.
+        # Instead of concatenating raw reviews, we build an explainable profile text:
+        # business metadata + extracted positive/negative themes.
+        from app.profile_builder import build_profile_text
+
         docs: list[str] = []
         for bid in business_ids:
-            texts = text_bank.get(bid, [])
-            cats = cat_bank.get(bid, "")
-            if not texts:
-                # Include category text to improve keyword matching even if review text is missing.
-                docs.append(cats)
-            else:
-                # Limit total length a bit for MVP stability
-                docs.append(cats + " " + " ".join(texts[: self.max_reviews_per_business]))
+            business_meta = {
+                "name": name_bank.get(bid, ""),
+                "categories": cat_bank.get(bid, ""),
+                "city": city_bank.get(bid, ""),
+                "state": state_bank.get(bid, ""),
+                "attributes": attrs_bank.get(bid, ""),
+            }
+            docs.append(
+                build_profile_text(
+                    business=business_meta,
+                    positive_texts=pos_text_bank.get(bid, []),
+                    negative_texts=neg_text_bank.get(bid, []),
+                    top_k_phrases=6,
+                )
+            )
 
         meta = business_df.copy()
         meta["business_id"] = meta["business_id"].astype(str)
@@ -269,6 +311,40 @@ class TouristRetrieval:
         )
 
     @staticmethod
+    def _haversine_km(lat0: float, lon0: float, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+        """Great-circle distance in km (vectorized over lat/lon arrays)."""
+        rlat0 = np.radians(lat0)
+        rlon0 = np.radians(lon0)
+        rlat = np.radians(lat)
+        rlon = np.radians(lon)
+        dlat = rlat - rlat0
+        dlon = rlon - rlon0
+        a = np.sin(dlat / 2.0) ** 2 + np.cos(rlat0) * np.cos(rlat) * np.sin(dlon / 2.0) ** 2
+        a = np.clip(a, 0.0, 1.0)
+        c = 2.0 * np.arcsin(np.sqrt(a))
+        return 6371.0 * c
+
+    @staticmethod
+    def _parse_price_tiers(meta: pd.DataFrame) -> np.ndarray:
+        """Extract Yelp RestaurantsPriceRange2 (1–4) from attributes string; NaN if missing."""
+        s = meta.get("attributes", pd.Series([""] * len(meta))).astype(str)
+        extracted = s.str.extract(r"RestaurantsPriceRange2['\"]?:\s*['\"]?(\d)", expand=False)
+        return pd.to_numeric(extracted, errors="coerce").to_numpy(dtype=float)
+
+    @staticmethod
+    def _budget_target_tier(budget: Optional[str]) -> Optional[float]:
+        if not budget:
+            return None
+        b = budget.strip().lower()
+        if b == "cheap":
+            return 1.0
+        if b == "moderate":
+            return 2.0
+        if b == "expensive":
+            return 4.0
+        return None
+
+    @staticmethod
     def _cosine_scores(restaurant_matrix: csr_matrix, restaurant_norms: np.ndarray, query_vec) -> np.ndarray:
         """
         Cosine similarity implemented manually (not using sklearn nearest neighbors).
@@ -289,8 +365,15 @@ class TouristRetrieval:
         city: Optional[str] = None,
         cuisines: Optional[list[str]] = None,
         top_k: int = 10,
-        alpha: float = 1.0,
-        beta: float = 0.2,
+        budget: Optional[str] = None,
+        ref_lat: Optional[float] = None,
+        ref_lon: Optional[float] = None,
+        max_radius_km: Optional[float] = None,
+        w_semantic: float = 1.0,
+        w_rating: float = 0.25,
+        w_price: float = 0.2,
+        w_distance: float = 0.25,
+        w_popularity: float = 0.15,
     ) -> pd.DataFrame:
         if not isinstance(keywords, str) or not keywords.strip():
             raise ValueError("keywords must be a non-empty string.")
@@ -357,6 +440,16 @@ class TouristRetrieval:
                 # Relax cuisines filter to avoid returning results from wrong states/cities.
                 mask = mask_statecity
 
+        # Optional hard distance filter (reference point + max radius)
+        dist_km_all = np.full(len(sim), np.nan, dtype=float)
+        if ref_lat is not None and ref_lon is not None:
+            lat = pd.to_numeric(index.meta["latitude"], errors="coerce").to_numpy(dtype=float)
+            lon = pd.to_numeric(index.meta["longitude"], errors="coerce").to_numpy(dtype=float)
+            valid_geo = np.isfinite(lat) & np.isfinite(lon)
+            dist_km_all[valid_geo] = self._haversine_km(float(ref_lat), float(ref_lon), lat[valid_geo], lon[valid_geo])
+            if max_radius_km is not None and float(max_radius_km) > 0:
+                mask &= valid_geo & (dist_km_all <= float(max_radius_km))
+
         if mask.sum() == 0:
             # If filter becomes empty, return empty results (better than returning wrong states).
             cols = [
@@ -364,17 +457,54 @@ class TouristRetrieval:
                 "address",
                 "city",
                 "state",
+                "categories",
                 "stars",
                 "review_count",
                 "similarity",
                 "final_score",
                 "latitude",
                 "longitude",
+                "distance_km",
+                "price_tier",
+                "price_match",
             ]
             return pd.DataFrame(columns=cols)
 
         idx = np.where(mask)[0]
-        final_score = alpha * sim[idx] + beta * index.stars_norm[idx]
+        sim_c = sim[idx]
+        stars_c = index.stars_norm[idx]
+        rc = index.meta.iloc[idx]["review_count"].astype(float).to_numpy()
+        pop = np.log1p(np.maximum(rc, 0.0))
+        pop_n = (pop - pop.min()) / (pop.max() - pop.min() + 1e-9)
+
+        sim_n = (sim_c - sim_c.min()) / (sim_c.max() - sim_c.min() + 1e-9)
+
+        # Price match vs budget (soft signal; missing tier -> neutral 0.5)
+        tiers = self._parse_price_tiers(index.meta.iloc[idx])
+        target_tier = self._budget_target_tier(budget)
+        price_match = np.full(len(idx), 0.5, dtype=float)
+        if target_tier is not None:
+            known = np.isfinite(tiers)
+            if known.any():
+                diff = np.abs(tiers[known] - target_tier)
+                price_match[known] = np.clip(1.0 - np.minimum(diff, 3.0) / 3.0, 0.0, 1.0)
+
+        # Distance score (higher is better). No ref -> neutral 0.5
+        dist_score = np.full(len(idx), 0.5, dtype=float)
+        dist_c = dist_km_all[idx]
+        if ref_lat is not None and ref_lon is not None and np.isfinite(dist_c).any():
+            dmax = float(max_radius_km) if max_radius_km and float(max_radius_km) > 0 else 50.0
+            finite = np.isfinite(dist_c)
+            dist_score[finite] = np.clip(1.0 - dist_c[finite] / (dmax + 1e-9), 0.0, 1.0)
+
+        # Multi-factor score (d1doc.md §3.5)
+        final_score = (
+            w_semantic * sim_n
+            + w_rating * stars_c
+            + w_price * price_match
+            + w_distance * dist_score
+            + w_popularity * pop_n
+        )
 
         if len(idx) <= top_k:
             top_local = np.argsort(final_score)[::-1]
@@ -387,6 +517,9 @@ class TouristRetrieval:
         out = index.meta.iloc[top_idx].copy()
         out["similarity"] = sim[top_idx]
         out["final_score"] = final_score[top_local]
+        out["distance_km"] = dist_km_all[top_idx]
+        out["price_tier"] = tiers[top_local]
+        out["price_match"] = price_match[top_local]
         out = out.sort_values("final_score", ascending=False).head(top_k)
 
         # Frontend-friendly fields (avoid showing business_id directly)
@@ -396,12 +529,16 @@ class TouristRetrieval:
                 "address",
                 "city",
                 "state",
+                "categories",
                 "stars",
                 "review_count",
                 "similarity",
                 "final_score",
                 "latitude",
                 "longitude",
+                "distance_km",
+                "price_tier",
+                "price_match",
             ]
         ]
 
