@@ -1,7 +1,0 @@
-target_businesses=2500
-actual_businesses=2500
-reviews=14965
-checkins=2438
-tips=6017
-seed=42
-min_per_state=40
