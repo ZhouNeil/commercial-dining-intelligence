@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from app.query_parser import ParsedQuery
+from app.search.query_parser import ParsedQuery
 
 
 def _safe_float(x: Any, default: float = 0.0) -> float:

@@ -14,6 +14,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from app.search.geo_constants import US_STATE_CODES, US_STATE_NAME_TO_CODE, US_STATE_NAMES_ORDERED
+
 
 # Known landmarks -> (lat, lon) for distance filtering when user says "near NYU" etc.
 LANDMARKS: dict[str, tuple[float, float]] = {
@@ -36,6 +38,8 @@ class ParsedQuery:
     raw: str
     cuisine: Optional[str] = None
     budget: Optional[str] = None  # cheap | moderate | expensive
+    # USPS two-letter state when user says "in CA" / "California" / "Los Angeles, ca"
+    state_code: Optional[str] = None
     location_text: Optional[str] = None
     ref_lat: Optional[float] = None
     ref_lon: Optional[float] = None
@@ -50,6 +54,7 @@ class ParsedQuery:
         return {
             "cuisine": self.cuisine,
             "budget": self.budget,
+            "state_code": self.state_code,
             "location": self.location_text,
             "radius_km": self.radius_km,
             "ref_lat": self.ref_lat,
@@ -62,6 +67,51 @@ class ParsedQuery:
 
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", s.strip().lower())
+
+
+def _extract_us_state_code(raw: str, q: str, location_text: Optional[str]) -> Optional[str]:
+    """
+    Map NL location hints to a USPS state code.
+    Prefer full state names and abbreviation tokens in safe contexts (avoid bare "or", "in", ...).
+    """
+    for name in US_STATE_NAMES_ORDERED:
+        if re.search(rf"\b{re.escape(name)}\b", q):
+            return US_STATE_NAME_TO_CODE[name]
+
+    abbr_patterns = [
+        r"\bin\s+([a-z]{2})\b",
+        r",\s*([a-z]{2})\b",
+        r"\b([a-z]{2})\s+usa\b",
+        r"\b([a-z]{2})\s+state\b",
+    ]
+    for pat in abbr_patterns:
+        m = re.search(pat, q)
+        if m:
+            code = m.group(1).upper()
+            if code in US_STATE_CODES:
+                return code
+
+    ru = raw.strip()
+    for pat in (r"\bin\s+([A-Z]{2})\b", r",\s*([A-Z]{2})\b"):
+        m = re.search(pat, ru)
+        if m:
+            code = m.group(1).upper()
+            if code in US_STATE_CODES:
+                return code
+
+    if location_text:
+        lt = location_text.strip().lower()
+        if lt in US_STATE_NAME_TO_CODE:
+            return US_STATE_NAME_TO_CODE[lt]
+        parts = lt.split()
+        if len(parts) == 1 and len(parts[0]) == 2 and parts[0].upper() in US_STATE_CODES:
+            return parts[0].upper()
+        if len(parts) >= 2:
+            tail = parts[-1]
+            if len(tail) == 2 and tail.upper() in US_STATE_CODES:
+                return tail.upper()
+
+    return None
 
 
 _STOPWORDS: set[str] = {
@@ -267,6 +317,8 @@ def parse_query(text: str) -> ParsedQuery:
                 ref_lat, ref_lon = coords
                 break
 
+    state_code = _extract_us_state_code(raw, q, location_text)
+
     # Keep a normalized raw version for debug/compat.
     extra = raw
     extra_keywords = _norm(extra)
@@ -277,6 +329,7 @@ def parse_query(text: str) -> ParsedQuery:
         raw=raw,
         cuisine=cuisine,
         budget=budget,
+        state_code=state_code,
         location_text=location_text,
         ref_lat=ref_lat,
         ref_lon=ref_lon,
@@ -289,6 +342,7 @@ def parse_query(text: str) -> ParsedQuery:
         raw=raw,
         cuisine=cuisine,
         budget=budget,
+        state_code=state_code,
         location_text=location_text,
         ref_lat=ref_lat,
         ref_lon=ref_lon,

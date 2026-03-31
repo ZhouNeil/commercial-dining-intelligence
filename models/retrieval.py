@@ -5,6 +5,6 @@ The recommendation retrieval logic now lives in `app/retrieval.py` so the Stream
 can keep all app-related code under one folder.
 """
 
-from app.retrieval import RestaurantSearchIndex, TouristRetrieval
+from app.core.retrieval import RestaurantSearchIndex, TouristRetrieval
 
 __all__ = ["RestaurantSearchIndex", "TouristRetrieval"]

@@ -47,6 +47,7 @@ class TouristRetrieval:
         max_reviews_per_business: int = 20,
         max_features: int = 50000,
         random_state: int = 42,
+        embed_google_maps: bool = True,
     ):
         self.data_dir = Path(data_dir)
         self.index_dir = Path(index_dir)
@@ -54,8 +55,9 @@ class TouristRetrieval:
         self.max_reviews_per_business = max_reviews_per_business
         self.max_features = max_features
         self.random_state = random_state
+        self.embed_google_maps = embed_google_maps
         # Bump this whenever retrieval/index-building logic changes meaningfully.
-        self.index_version = 3
+        self.index_version = 4
 
     @property
     def business_path(self) -> Path:
@@ -98,6 +100,7 @@ class TouristRetrieval:
             "vectorizer_min_df": 1,
             "vectorizer_ngram_range": [1, 2],
             "categories_norm_in_docs": True,
+            "embed_google_maps": self.embed_google_maps,
         }
         return cfg != expected
 
@@ -107,9 +110,25 @@ class TouristRetrieval:
 
         We select the top-N restaurants by review_count for a stable MVP candidate set.
         """
-        business_df = pd.read_csv(self.business_path)
+        from app.core.google_maps_loader import (
+            google_maps_csv_path,
+            load_google_maps_as_yelp_schema,
+            synthetic_google_profile_snippets,
+        )
+
+        business_df = pd.read_csv(self.business_path, low_memory=False)
         if "review_count" not in business_df.columns:
             raise ValueError("business_dining.csv must contain 'review_count' column.")
+
+        for _c in ("_gm_detail", "_gm_url"):
+            if _c not in business_df.columns:
+                business_df[_c] = ""
+        if self.embed_google_maps:
+            _gmp = google_maps_csv_path(self.data_dir)
+            if _gmp.exists():
+                _gm = load_google_maps_as_yelp_schema(_gmp)
+                if _gm is not None and not _gm.empty:
+                    business_df = pd.concat([business_df, _gm], ignore_index=True)
 
         # Candidate set selection:
         # Previously we picked a global Top-N by review_count.
@@ -137,14 +156,14 @@ class TouristRetrieval:
         business_df["city"] = business_df["city"].astype(str).str.strip()
         business_df["state"] = business_df["state"].astype(str).str.strip().str.upper()
 
-        business_ids = business_df["business_id"].to_numpy()
+        business_ids = business_df["business_id"].astype(str).to_numpy()
 
         # Collect review texts per restaurant.
         # Note: we read in chunks to avoid loading the whole review_dining.csv.
         selected_set = set(business_ids.tolist())
         # Split reviews by sentiment (positive/negative) and extract themes.
-        pos_text_bank: dict[str, list[str]] = {bid: [] for bid in selected_set}
-        neg_text_bank: dict[str, list[str]] = {bid: [] for bid in selected_set}
+        pos_text_bank: dict[str, list[str]] = {str(bid): [] for bid in selected_set}
+        neg_text_bank: dict[str, list[str]] = {str(bid): [] for bid in selected_set}
         cat_bank: dict[str, str] = {}
         name_bank: dict[str, str] = {}
         city_bank: dict[str, str] = {}
@@ -192,37 +211,54 @@ class TouristRetrieval:
                     if len(neg_text_bank[bid]) < neg_limit:
                         neg_text_bank[bid].append(txt)
 
-            # Early stop when each restaurant has enough total sentiment text.
+            # Early stop when each Yelp-scoped restaurant has enough sentiment text.
+            # Google Maps rows have no matching reviews in review_dining.csv — exclude from this check.
             min_total = min(3, self.max_reviews_per_business)
-            done = all((len(pos_text_bank[bid]) + len(neg_text_bank[bid])) >= min_total for bid in selected_set)
-            if done:
-                break
+            yelp_only = {str(b) for b in selected_set if not str(b).startswith("gm_")}
+            if yelp_only:
+                done = all(
+                    (len(pos_text_bank[bid]) + len(neg_text_bank[bid])) >= min_total for bid in yelp_only
+                )
+                if done:
+                    break
 
         # Final docs in the same order as business_ids.
         # Instead of concatenating raw reviews, we build an explainable profile text:
         # business metadata + extracted positive/negative themes.
-        from app.profile_builder import build_profile_text
+        from app.core.profile_builder import build_profile_text
 
+        row_by_bid = business_df.set_index("business_id")
         docs: list[str] = []
         for bid in business_ids:
+            bid_s = str(bid)
+            pos_list = list(pos_text_bank.get(bid_s, []))
+            neg_list = list(neg_text_bank.get(bid_s, []))
+            if bid_s.startswith("gm_"):
+                try:
+                    px, nx = synthetic_google_profile_snippets(row_by_bid.loc[bid_s])
+                    pos_list.extend(px)
+                    neg_list.extend(nx)
+                except (KeyError, TypeError):
+                    pass
             business_meta = {
-                "name": name_bank.get(bid, ""),
-                "categories": cat_bank.get(bid, ""),
-                "city": city_bank.get(bid, ""),
-                "state": state_bank.get(bid, ""),
-                "attributes": attrs_bank.get(bid, ""),
+                "name": name_bank.get(bid_s, ""),
+                "categories": cat_bank.get(bid_s, ""),
+                "city": city_bank.get(bid_s, ""),
+                "state": state_bank.get(bid_s, ""),
+                "attributes": attrs_bank.get(bid_s, ""),
             }
             docs.append(
                 build_profile_text(
                     business=business_meta,
-                    positive_texts=pos_text_bank.get(bid, []),
-                    negative_texts=neg_text_bank.get(bid, []),
+                    positive_texts=pos_list,
+                    negative_texts=neg_list,
                     top_k_phrases=6,
                 )
             )
 
         meta = business_df.copy()
         meta["business_id"] = meta["business_id"].astype(str)
+        meta.drop(columns=["_gm_detail", "_gm_url"], inplace=True, errors="ignore")
         # Normalized fields for strict filtering (case/space insensitive)
         meta["state_norm"] = meta["state"].astype(str).str.strip().str.upper()
         meta["city_norm"] = meta["city"].astype(str).str.strip().str.lower()
@@ -269,6 +305,7 @@ class TouristRetrieval:
                 "vectorizer_min_df": 1,
                 "vectorizer_ngram_range": [1, 2],
                 "categories_norm_in_docs": True,
+                "embed_google_maps": self.embed_google_maps,
             }
             paths["config"].write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
