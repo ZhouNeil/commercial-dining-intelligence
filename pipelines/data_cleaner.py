@@ -229,7 +229,7 @@ class YelpDataProcessor:
 
 
 if __name__ == "__main__":
-    business_file = "yelp_dataset_csv/yelp_academic_dataset_business.csv"
+    business_file = "../yelp_dataset_csv/yelp_academic_dataset_business.csv"
     
     try:
         # Create an instance
@@ -240,9 +240,10 @@ if __name__ == "__main__":
         philly_restaurants_df.to_csv("updated_philly_data.csv", index=False)
         print(f"Data processed for Philadelphia successfully! Shape: {philly_restaurants_df.shape}")
         
-        # Example 2: Run scalable operation on another city
-        # tucson_restaurants_df = processor.process(city="Tucson", category_keywords=["Restaurants", "Food"])
-        # print(f"Data processed for Tucson successfully! Shape: {tucson_restaurants_df.shape}")
+        # Example 2: How to query everything (uncomment to process the whole dataset)
+        # all_restaurants_df = processor.process(category_keywords=["Restaurants", "Food"])
+        # all_restaurants_df.to_csv("updated_all_data.csv", index=False)
+        # print(f"Data processed for the entire dataset successfully! Shape: {all_restaurants_df.shape}")
         
     except FileNotFoundError:
         print(f"Dataset file '{business_file}' not found. Verify your path.")
