@@ -156,7 +156,7 @@ def build_final_feature_matrix(df: pd.DataFrame):
     """
 
     X_base, y_survival, y_rating = prepare_base_features(df)
-
+    
     cluster_ids, scaler_cluster, kmeans = build_cluster_features(df)
     X_pca_df, scaler_pca, pca = build_pca_features(X_base)
 
