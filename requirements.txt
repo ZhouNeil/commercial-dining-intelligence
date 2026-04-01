@@ -6,5 +6,7 @@ matplotlib
 seaborn
 scipy
 joblib
+xgboost>=2.0.0
 folium
-jupyter
+streamlit-folium
+sentence-transformers>=2.2.0
