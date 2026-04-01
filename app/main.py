@@ -85,7 +85,7 @@ def _build_recommendation_folium_map(result: pd.DataFrame, focus_idx: int):
             fill=True,
             fill_color="#e74c3c",
             fill_opacity=0.95,
-            tooltip=f"#{focus_idx + 1} {fn} · 当前选中",
+            tooltip=f"#{focus_idx + 1} {fn} · selected",
             popup=folium.Popup(
                 f"<b>#{focus_idx + 1} {fn}</b><br/>"
                 f"{focus_row.get('address', 'N/A')}, {focus_row.get('city', '')}, {focus_row.get('state', '')}",
@@ -141,12 +141,12 @@ def main():
     with st.sidebar:
         st.header("Search Settings")
         st.caption(
-            "多页面：在侧边栏页面列表中可打开 **K-Means 聚类**（地图与肘部法）。"
-            "若使用 `google_maps_restaurants(cleaned).csv`，请 **Force Rebuild Index** 一次以并入索引。"
+            "Multi-page app: open **K-Means Clustering** from the sidebar page list. "
+            "If you use `google_maps_restaurants(cleaned).csv`, click **Force Rebuild Index** once to include it."
         )
         rebuild = st.button(
             "Force Rebuild Index",
-            help="Rebuild TF-IDF：从 `business_dining` + `review_dining` 构建，并合并 Google Maps CSV（若存在）。",
+            help="Rebuild TF-IDF from `business_dining` + `review_dining`, and merge Google Maps CSV if present.",
         )
         st.subheader("Ranking weights (d1doc)")
         w_semantic = st.slider("w_semantic", 0.0, 2.0, 1.0, 0.05)
@@ -155,15 +155,15 @@ def main():
         w_distance = st.slider("w_distance", 0.0, 2.0, 0.25, 0.05)
         w_popularity = st.slider("w_popularity", 0.0, 2.0, 0.15, 0.05)
 
-        st.subheader("NL → 地区筛选")
+        st.subheader("NL → Location filter")
         _semantic_ok = importlib.util.find_spec("sentence_transformers") is not None
         if not _semantic_ok:
-            st.caption("未安装 `sentence-transformers`：仅使用规则解析州名/缩写。")
+            st.caption("`sentence-transformers` not installed: only rule-based state parsing will be used.")
         use_minilm_state = st.checkbox(
-            "规则未识别州时，用 MiniLM 从数据集中推断州",
+            "If no state is detected, use MiniLM to infer a state from dataset states",
             value=_semantic_ok,
             disabled=not _semantic_ok,
-            help="基于 sentence-transformers / all-MiniLM-L6-v2；首次运行会下载约 90MB 模型。",
+            help="Uses sentence-transformers / all-MiniLM-L6-v2. First run downloads ~90MB model.",
         )
 
     @st.cache_resource
@@ -231,9 +231,9 @@ def main():
                     guessed, sc = infer_state_minilm(nl_query, st_codes, enc)
                     if guessed:
                         effective_state = guessed
-                        semantic_state_note = f"MiniLM 推断州 **{guessed}**（cosine **{sc:.3f}**）。"
+                        semantic_state_note = f"MiniLM inferred state **{guessed}** (cosine **{sc:.3f}**)."
                 except Exception as ex:
-                    semantic_state_note = f"MiniLM 推断失败（已忽略）：`{ex}`"
+                    semantic_state_note = f"MiniLM inference failed (ignored): `{ex}`"
 
             # Map parser cuisine labels to advanced-tab multiselect keys (category rules).
             cuisine_from_nl: list[str] = []
@@ -343,13 +343,13 @@ def main():
         with st.expander("Parsed constraints (rule-based + applied filters)", expanded=False):
             st.json(parsed.to_dict())
             if effective_state:
-                st.markdown(f"**实际用于检索的州：** `{effective_state}`")
+                st.markdown(f"**Applied state filter:** `{effective_state}`")
             if semantic_state_note:
                 st.markdown(semantic_state_note)
             st.caption(
-                "切换下方推荐选项时页面会重算，但结果来自上次「Get Recommendations」；"
-                "改条件后请再次点击检索。"
-                "自然语言中的州名/缩写会合并进筛选。"
+                "Switching tabs will rerun the page, but results come from the last **Get Recommendations** run. "
+                "After changing filters, click **Get Recommendations** again. "
+                "State names/abbreviations in NL (e.g., CA/California) are merged into the filter when possible."
             )
 
         st.subheader("Recommendations (Top-K)")
@@ -380,7 +380,8 @@ def main():
                 return f"{i + 1}. {nm[:20]}…"
 
             st.caption(
-                "每个 **选项卡** 对应一家推荐：切换选项卡即可查看详情，地图会 **定位到该店**（大红圈），浅蓝点为同批其它结果。"
+                "Each tab is one recommended restaurant. Switching tabs shows its details, and the map centers "
+                "on that restaurant (red highlight); light-blue markers are the other Top-K results."
             )
 
             tab_labels = [_tab_title(i) for i in range(n_res)]
@@ -426,7 +427,7 @@ def main():
                 with tab:
                     row_i = result.iloc[i]
                     _render_rec_card(i + 1, row_i)
-                    st.markdown("#### 地图定位")
+                    st.markdown("#### Map")
                     if "latitude" in result.columns and "longitude" in result.columns:
                         m = _build_recommendation_folium_map(result, i)
                         st_folium(
@@ -438,7 +439,7 @@ def main():
                             use_container_width=True,
                         )
                     else:
-                        st.info("结果中缺少经纬度，无法显示地图。")
+                        st.info("Latitude/longitude missing; cannot render map.")
 
             st.write(
                 "How it works: TF-IDF cosine similarity on aggregated review text, then a multi-factor "

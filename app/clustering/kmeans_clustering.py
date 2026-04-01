@@ -1,5 +1,5 @@
 """
-K-Means 商户聚类（与 notebooks/kmeans.ipynb 思路一致），供 Streamlit 页面调用。
+K-Means clustering helpers (mirrors notebooks/kmeans.ipynb), used by Streamlit pages.
 """
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def elbow_inertias(
 
 
 def folium_cluster_map(df: pd.DataFrame, color_list: list[str] | None = None) -> Any:
-    """构建 Folium 地图（需已安装 folium）。"""
+    """Build a Folium map (requires folium installed)."""
     import folium
 
     if color_list is None:
@@ -88,7 +88,7 @@ def folium_cluster_map(df: pd.DataFrame, color_list: list[str] | None = None) ->
         cid = int(row["cluster"])
         color = color_list[cid % len(color_list)]
         name = str(row.get("name", ""))[:80]
-        tip = f"簇 {cid}" + (f" · {name}" if name else "")
+        tip = f"Cluster {cid}" + (f" · {name}" if name else "")
         folium.CircleMarker(
             location=[float(row["latitude"]), float(row["longitude"])],
             radius=5,

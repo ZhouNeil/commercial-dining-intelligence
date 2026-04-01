@@ -1,6 +1,6 @@
 """
-K-Means 商户聚类可视化（对应 notebooks/kmeans.ipynb 流程）。
-运行：在项目根目录执行  streamlit run app/main.py ，从侧边栏进入本页。
+K-Means merchant clustering visualization (mirrors notebooks/kmeans.ipynb).
+Run: from project root, `streamlit run app/main.py`, then open this page from the sidebar.
 """
 from __future__ import annotations
 
@@ -29,9 +29,9 @@ from app.clustering.kmeans_clustering import (  # noqa: E402
     load_business_for_clustering,
 )
 
-st.set_page_config(page_title="K-Means 商户聚类", layout="wide")
-st.title("商户 K-Means 聚类")
-st.caption("与 `notebooks/kmeans.ipynb` 一致：地理 + 星级 + 评论量（可 log1p），标准化后聚类。")
+st.set_page_config(page_title="K-Means Clustering", layout="wide")
+st.title("K-Means Clustering (Merchants)")
+st.caption("Mirrors `notebooks/kmeans.ipynb`: geo + stars + review_count (optional log1p), then standardize + K-Means.")
 
 csv_candidates = [
     BASE / "data" / "cleaned" / "business_dining.csv",
@@ -45,14 +45,14 @@ for p in csv_candidates:
 
 if data_path is None:
     st.error(
-        "未找到商户数据。请将 `business_dining.csv` 放在 `data/cleaned/`，"
-        "或运行 `scripts/build_representative_slice.py` 生成 `data/slice_representative/`。"
+        "Merchant dataset not found. Put `business_dining.csv` under `data/cleaned/`, "
+        "or run `scripts/build_representative_slice.py` to generate `data/slice_representative/`."
     )
     st.stop()
 
 with st.sidebar:
-    st.header("数据与特征")
-    st.text(f"数据文件：\n{data_path.relative_to(BASE)}")
+    st.header("Data & features")
+    st.text(f"Data file:\n{data_path.relative_to(BASE)}")
     try:
         states_df = pd.read_csv(data_path, usecols=["state"], low_memory=False)
         states = (
@@ -71,26 +71,26 @@ with st.sidebar:
         )
     except Exception:
         state_opts = ["ALL"]
-    state_sel = st.selectbox("按州筛选（与 notebook 中选 NJ 类似）", state_opts, index=0)
+    state_sel = st.selectbox("Filter by state (like selecting NJ in the notebook)", state_opts, index=0)
     state_val = None if state_sel == "ALL" else state_sel
 
-    use_log1p = st.checkbox("对 review_count 使用 log1p", value=True, help="减轻极端评论量对聚类的影响")
-    n_clusters = st.slider("簇数量 K", min_value=2, max_value=12, value=4, step=1)
+    use_log1p = st.checkbox("Apply log1p to review_count", value=True, help="Reduce the impact of extreme review counts")
+    n_clusters = st.slider("Number of clusters (K)", min_value=2, max_value=12, value=4, step=1)
 
-    st.subheader("肘部法")
-    k_elbow_max = st.slider("肘部法 K 上限", min_value=5, max_value=15, value=10)
+    st.subheader("Elbow method")
+    k_elbow_max = st.slider("Max K for elbow curve", min_value=5, max_value=15, value=10)
 
-btn = st.button("运行聚类", type="primary")
+btn = st.button("Run clustering", type="primary")
 
 if not btn and "kmeans_result" not in st.session_state:
-    st.info('点击左侧「运行聚类」生成结果；首次加载可先选州与 K。')
+    st.info("Click **Run clustering** to generate results. On first load, you can select state and K first.")
     st.stop()
 
 if btn:
-    with st.spinner("加载与聚类…"):
+    with st.spinner("Loading data and clustering..."):
         raw = load_business_for_clustering(data_path, state=state_val)
         if raw.empty:
-            st.error("筛选后无数据，请更换州或检查 CSV。")
+            st.error("No data after filtering. Try another state or check the CSV.")
             st.stop()
         feat_df = add_log1p_review_count(raw) if use_log1p else raw.copy()
         feature_cols = list(DEFAULT_FEATURE_COLS)
@@ -115,13 +115,13 @@ ks, inertias = res["ks"], res["inertias"]
 
 c1, c2, c3 = st.columns(3)
 with c1:
-    st.metric("商户数", len(labeled))
+    st.metric("Merchants", len(labeled))
 with c2:
-    st.metric("簇数 K", res["n_clusters"])
+    st.metric("Clusters (K)", res["n_clusters"])
 with c3:
-    st.metric("筛选州", str(res["state"]))
+    st.metric("State filter", str(res["state"]))
 
-tab_map, tab_scatter, tab_table, tab_elbow = st.tabs(["地图", "散点图", "簇统计", "肘部法"])
+tab_map, tab_scatter, tab_table, tab_elbow = st.tabs(["Map", "Scatter", "Cluster summary", "Elbow curve"])
 
 with tab_map:
     try:
@@ -130,7 +130,7 @@ with tab_map:
         m = folium_cluster_map(labeled)
         st_folium(m, width=1200, height=480, returned_objects=[])
     except ImportError:
-        st.warning("未安装 streamlit-folium，使用简化散点图。可执行：pip install streamlit-folium folium")
+        st.warning("`streamlit-folium` not installed. Falling back to a simple scatter chart. Install: pip install streamlit-folium folium")
         st.scatter_chart(
             labeled.rename(columns={"cluster": "cluster_id"}),
             x="longitude",
@@ -139,7 +139,7 @@ with tab_map:
         )
 
 with tab_scatter:
-    # 图中文字用英文，避免 DejaVu Sans 缺中文字形导致 st.pyplot 渲染异常
+    # Use English text to avoid missing CJK glyphs in default fonts.
     fig, ax = plt.subplots(figsize=(8, 6))
     sc = ax.scatter(
         labeled["longitude"],
@@ -161,7 +161,7 @@ with tab_table:
     summ = cluster_summary(labeled, feature_cols)
     st.dataframe(summ.style.format("{:.4f}", subset=feature_cols), width="stretch")
     st.download_button(
-        "下载带簇标签 CSV",
+        "Download labeled CSV (with cluster id)",
         labeled.to_csv(index=False).encode("utf-8"),
         file_name="kmeans_labeled_merchants.csv",
         mime="text/csv",
