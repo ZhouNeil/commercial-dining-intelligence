@@ -11,7 +11,7 @@ commercial-dining-intelligence/
 ├── app/                        # Streamlit UI & Controller Logic (Role 5)
 │   └── main.py                 # Dual-mode entry point and API Glue Code (Controller)
 ├── data/                       # Local storage for datasets and models (Git-ignored)
-│   ├── processed_csv/          # Cleaned, city-specific feature matrices (e.g., philly_X.csv)
+│   ├── processed_csv/          # Cleaned, city-specific feature matrices (e.g., output_philly.csv)
 │   └── saved_models/           # Serialized city-specific predictive models (e.g., lr_philly.pkl)
 ├── pipelines/                  # Data engineering, feature extraction & aggregation
 │   ├── data_cleaner.py         # Transforms raw Yelp JSONs into structured matrices (Role 1)
@@ -37,7 +37,7 @@ Due to the massive size of the Yelp Open Dataset, raw and cleaned data files are
 * Fetch the cleaned dataset (e.g., `output_philly.csv`) from our team's shared Google: [`https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing`](https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing)
 
 **2. Place it in the Repo:**
-* Move the downloaded files directly into the `data/` folder. Do not force-add data files to Git.
+* Move the downloaded files directly into the `data/processed_csv/` folder. Do not force-add data files to Git.
 
 ## 🚀 Setup Environment
 
