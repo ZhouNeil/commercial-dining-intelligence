@@ -1,4 +1,4 @@
-# Yelp Dual-Mode Commercial & Dining Intelligence App
+# Dual-Mode Commercial & Dining Intelligence App
 
 This repository contains the codebase for our Machine Learning course final project. The application utilizes the Yelp Open Dataset to provide insights for both prospective merchants and tourists.
 
