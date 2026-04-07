@@ -48,6 +48,8 @@ class TouristRetrieval:
         max_features: int = 50000,
         random_state: int = 42,
         embed_google_maps: bool = True,
+        restrict_index_cities: bool = True,
+        rating_trust_ref_reviews: float = 150.0,
     ):
         self.data_dir = Path(data_dir)
         self.index_dir = Path(index_dir)
@@ -56,8 +58,10 @@ class TouristRetrieval:
         self.max_features = max_features
         self.random_state = random_state
         self.embed_google_maps = embed_google_maps
+        self.restrict_index_cities = restrict_index_cities
+        self.rating_trust_ref_reviews = float(rating_trust_ref_reviews)
         # Bump this whenever retrieval/index-building logic changes meaningfully.
-        self.index_version = 4
+        self.index_version = 5
 
     @property
     def business_path(self) -> Path:
@@ -92,6 +96,8 @@ class TouristRetrieval:
         except Exception:
             return True
 
+        from app.core.index_cities import INDEX_FILTER_ID
+
         expected = {
             "index_version": self.index_version,
             "max_businesses": self.max_businesses,
@@ -101,6 +107,9 @@ class TouristRetrieval:
             "vectorizer_ngram_range": [1, 2],
             "categories_norm_in_docs": True,
             "embed_google_maps": self.embed_google_maps,
+            "restrict_index_cities": self.restrict_index_cities,
+            "index_city_filter_id": INDEX_FILTER_ID if self.restrict_index_cities else "none",
+            "rating_trust_ref_reviews": self.rating_trust_ref_reviews,
         }
         return cfg != expected
 
@@ -129,6 +138,25 @@ class TouristRetrieval:
                 _gm = load_google_maps_as_yelp_schema(_gmp)
                 if _gm is not None and not _gm.empty:
                     business_df = pd.concat([business_df, _gm], ignore_index=True)
+
+        if self.restrict_index_cities:
+            from app.core.index_cities import INDEX_ALLOWED_CITY_STATE
+
+            if "city" not in business_df.columns:
+                business_df["city"] = ""
+            if "state" not in business_df.columns:
+                business_df["state"] = ""
+            _ck = business_df["city"].astype(str).str.strip().str.lower()
+            _sk = business_df["state"].astype(str).str.strip().str.upper()
+            _in_scope = [
+                (str(c), str(s)) in INDEX_ALLOWED_CITY_STATE for c, s in zip(_ck, _sk)
+            ]
+            business_df = business_df.loc[_in_scope].copy()
+            if business_df.empty:
+                raise ValueError(
+                    "Index city filter removed all businesses. Check `app/core/index_cities.py` "
+                    "or set restrict_index_cities=False on TouristRetrieval."
+                )
 
         # Candidate set selection:
         # Previously we picked a global Top-N by review_count.
@@ -297,6 +325,8 @@ class TouristRetrieval:
             meta.to_csv(paths["meta"], index=False)
 
             # Write config for future rebuild decisions
+            from app.core.index_cities import INDEX_FILTER_ID
+
             cfg = {
                 "index_version": self.index_version,
                 "max_businesses": self.max_businesses,
@@ -306,6 +336,9 @@ class TouristRetrieval:
                 "vectorizer_ngram_range": [1, 2],
                 "categories_norm_in_docs": True,
                 "embed_google_maps": self.embed_google_maps,
+                "restrict_index_cities": self.restrict_index_cities,
+                "index_city_filter_id": INDEX_FILTER_ID if self.restrict_index_cities else "none",
+                "rating_trust_ref_reviews": self.rating_trust_ref_reviews,
             }
             paths["config"].write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -369,6 +402,18 @@ class TouristRetrieval:
         return pd.to_numeric(extracted, errors="coerce").to_numpy(dtype=float)
 
     @staticmethod
+    def _stars_with_review_trust(
+        stars_norm: np.ndarray, review_count: np.ndarray, ref_rc: float
+    ) -> np.ndarray:
+        """
+        Shrink stars_norm toward 0.5 (avg on 1–5 scale) when review_count is small.
+        ref_rc: ~count at which trust reaches 1 (log1p scale).
+        """
+        rc = np.maximum(review_count.astype(float), 0.0)
+        trust = np.clip(np.log1p(rc) / np.log1p(max(ref_rc, 1.0)), 0.0, 1.0)
+        return stars_norm * trust + 0.5 * (1.0 - trust)
+
+    @staticmethod
     def _budget_target_tier(budget: Optional[str]) -> Optional[float]:
         if not budget:
             return None
@@ -402,6 +447,8 @@ class TouristRetrieval:
         city: Optional[str] = None,
         cuisines: Optional[list[str]] = None,
         top_k: int = 10,
+        pool_k: Optional[int] = None,
+        include_business_id: bool = False,
         budget: Optional[str] = None,
         ref_lat: Optional[float] = None,
         ref_lon: Optional[float] = None,
@@ -505,12 +552,15 @@ class TouristRetrieval:
                 "price_tier",
                 "price_match",
             ]
+            if include_business_id:
+                cols.insert(0, "business_id")
             return pd.DataFrame(columns=cols)
 
         idx = np.where(mask)[0]
         sim_c = sim[idx]
         stars_c = index.stars_norm[idx]
         rc = index.meta.iloc[idx]["review_count"].astype(float).to_numpy()
+        stars_rank = self._stars_with_review_trust(stars_c, rc, self.rating_trust_ref_reviews)
         pop = np.log1p(np.maximum(rc, 0.0))
         pop_n = (pop - pop.min()) / (pop.max() - pop.min() + 1e-9)
 
@@ -534,20 +584,23 @@ class TouristRetrieval:
             finite = np.isfinite(dist_c)
             dist_score[finite] = np.clip(1.0 - dist_c[finite] / (dmax + 1e-9), 0.0, 1.0)
 
-        # Multi-factor score (d1doc.md §3.5)
+        # Multi-factor score (d1doc.md §3.5).
+        # stars_rank: stars weighted by review trust (low counts shrink toward neutral).
         final_score = (
             w_semantic * sim_n
-            + w_rating * stars_c
+            + w_rating * stars_rank
             + w_price * price_match
             + w_distance * dist_score
             + w_popularity * pop_n
         )
 
-        if len(idx) <= top_k:
+        rank_k = max(top_k, int(pool_k)) if pool_k is not None else top_k
+        rank_k = max(1, min(rank_k, len(idx)))
+
+        if len(idx) <= rank_k:
             top_local = np.argsort(final_score)[::-1]
         else:
-            # partial sort then order
-            top_local = np.argpartition(final_score, -top_k)[-top_k:]
+            top_local = np.argpartition(final_score, -rank_k)[-rank_k:]
             top_local = top_local[np.argsort(final_score[top_local])[::-1]]
 
         top_idx = idx[top_local]
@@ -557,25 +610,25 @@ class TouristRetrieval:
         out["distance_km"] = dist_km_all[top_idx]
         out["price_tier"] = tiers[top_local]
         out["price_match"] = price_match[top_local]
-        out = out.sort_values("final_score", ascending=False).head(top_k)
+        out = out.sort_values("final_score", ascending=False).head(rank_k)
 
-        # Frontend-friendly fields (avoid showing business_id directly)
-        return out[
-            [
-                "name",
-                "address",
-                "city",
-                "state",
-                "categories",
-                "stars",
-                "review_count",
-                "similarity",
-                "final_score",
-                "latitude",
-                "longitude",
-                "distance_km",
-                "price_tier",
-                "price_match",
-            ]
+        cols = [
+            "name",
+            "address",
+            "city",
+            "state",
+            "categories",
+            "stars",
+            "review_count",
+            "similarity",
+            "final_score",
+            "latitude",
+            "longitude",
+            "distance_km",
+            "price_tier",
+            "price_match",
         ]
+        if include_business_id and "business_id" in out.columns:
+            cols = ["business_id"] + cols
+        return out[cols]
 

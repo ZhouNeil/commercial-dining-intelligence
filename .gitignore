@@ -218,6 +218,12 @@ data/*.parquet
 # Stratified slice (not in repo; regenerate: python scripts/build_representative_slice.py)
 data/slice_representative/
 
+# Local cleaned + mirror datasets + Yelp Photos bundle + built indexes (too large for GitHub)
+data/cleaned/
+data/kaggle/
+data/Yelp Photos/
+models/artifacts/
+
 # Ignore Mac OS system files (if anyone is using a Mac)
 .DS_Store
 

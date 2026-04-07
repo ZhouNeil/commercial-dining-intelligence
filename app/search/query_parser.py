@@ -219,6 +219,23 @@ def _build_semantic_query(raw: str, parsed: ParsedQuery) -> tuple[list[str], str
     return filtered[:10], semantic_query
 
 
+def extract_budget_hint(text: str) -> Optional[str]:
+    """
+    Infer cheap | moderate | expensive from any user text (same keyword order as parse_query).
+    Used so budget applies when words appear only in Advanced «Extra keywords», not only NL box.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+    q = _norm(text.strip())
+    if re.search(r"\b(cheap|affordable|budget|inexpensive|low[- ]?cost)\b", q):
+        return "cheap"
+    if re.search(r"\b(expensive|fancy|upscale|fine dining|splurge)\b", q):
+        return "expensive"
+    if re.search(r"\b(moderate|mid[- ]?range|midrange|reasonable)\b", q):
+        return "moderate"
+    return None
+
+
 def parse_query(text: str) -> ParsedQuery:
     if not isinstance(text, str) or not text.strip():
         return ParsedQuery(raw=text or "")
@@ -251,13 +268,7 @@ def parse_query(text: str) -> ParsedQuery:
             cuisine = label
             break
 
-    budget = None
-    if re.search(r"\b(cheap|affordable|budget|inexpensive|low[- ]?cost)\b", q):
-        budget = "cheap"
-    elif re.search(r"\b(expensive|fancy|upscale|fine dining|splurge)\b", q):
-        budget = "expensive"
-    elif re.search(r"\b(moderate|mid[- ]?range|midrange|reasonable)\b", q):
-        budget = "moderate"
+    budget = extract_budget_hint(raw)
 
     radius_km = None
     m = re.search(r"within\s+(\d+(?:\.\d+)?)\s*(km|kilometers?|miles?|mi)\b", q)
