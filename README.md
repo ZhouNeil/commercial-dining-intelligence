@@ -11,10 +11,12 @@ commercial-dining-intelligence/
 ├── app/                        # Streamlit UI & Controller Logic (Role 5)
 │   └── main.py                 # Dual-mode entry point and API Glue Code (Controller)
 ├── data/                       # Local storage for datasets and models (Git-ignored)
+│   ├── raw/yelp/               # Optional: place Yelp `review.json` here (not committed)
 │   ├── processed_csv/          # Cleaned, city-specific feature matrices (e.g., output_philly.csv)
 │   └── saved_models/           # Serialized city-specific predictive models (e.g., lr_philly.pkl)
 ├── pipelines/                  # Data engineering, feature extraction & aggregation
 │   ├── data_cleaner.py         # Transforms raw Yelp JSONs into structured matrices (Role 1)
+│   ├── build_review_tfidf_from_json.py  # Streams full review.json → TF-IDF matrix (Role 1)
 │   ├── feature_pca.py          # Applies PCA for business DNA extraction (Role 5)
 │   └── feature_aggregator.py   # Online engine to calculate density & avg ratings (Role 1)
 ├── models/                     # Core ML algorithms and predictive engines
@@ -62,6 +64,18 @@ If you do not want to use `uv`, you can also install dependencies with pip:
 ```bash
 pip install -r requirements.txt
 ```
+
+## TF-IDF matrix from full `review.json` (optional)
+
+To build a sparse TF-IDF matrix from the Yelp Academic Dataset **`review.json`** (JSON Lines), place the file at `data/raw/yelp/review.json`, or set `YELP_REVIEW_JSON` to any path on your machine. You still need `data/cleaned/business_dining.csv` so reviews are filtered to the same dining businesses as the app.
+
+From the repo root (with the virtual environment activated):
+
+```bash
+python -m pipelines.build_review_tfidf_from_json --force
+```
+
+Outputs are written to `models/artifacts/review_json_tfidf/` (`restaurant_matrix.npz`, `vectorizer.joblib`, `restaurant_ids.npy`, `meta.csv`, `build_config.json`). These artifacts are git-ignored.
 
 ## Starting the App
 

@@ -220,6 +220,12 @@ data/processed_csv/*
 data/saved_models/*
 *.pkl
 
+# TF-IDF matrix + vectorizer from pipelines/build_review_tfidf_from_json.py (large)
+models/artifacts/review_json_tfidf/
+
+# Raw Yelp Academic Dataset dumps (place locally; do not commit)
+data/raw/**/*.json
+
 # EXCEPT for .gitkeep files (Force Git to track the empty folder structure)
 !data/processed_csv/.gitkeep
 !data/saved_models/.gitkeep
