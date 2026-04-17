@@ -216,6 +216,15 @@ data/*.json
 data/*.parquet
 data/processed_csv/*
 
+# Stratified slice (not in repo; regenerate: python scripts/build_representative_slice.py)
+data/slice_representative/
+
+# Local cleaned + mirror datasets + Yelp Photos bundle + built indexes (too large for GitHub)
+data/cleaned/
+data/kaggle/
+data/Yelp Photos/
+models/artifacts/
+
 # Ignore serialized machine learning models
 data/saved_models/*
 *.pkl
@@ -224,7 +233,7 @@ data/saved_models/*
 !data/processed_csv/.gitkeep
 !data/saved_models/.gitkeep
 
-# Ignore Mac OS system files
+# Ignore Mac OS system files (if anyone is using a Mac)
 .DS_Store
 
 # Ignore local environment variables or secrets
