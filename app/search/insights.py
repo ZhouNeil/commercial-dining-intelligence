@@ -1,7 +1,7 @@
 """
 Lightweight insight strings for each recommendation (MVP, no LLM).
 
-Aligned with d1doc.md §3.6 — basic keyword / heuristic explanations.
+Aligned with docs/d1doc.md §4.6 — basic keyword / heuristic explanations.
 """
 
 from __future__ import annotations
