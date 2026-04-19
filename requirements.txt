@@ -8,3 +8,4 @@ scipy
 joblib
 folium
 jupyter
+streamlit-folium
