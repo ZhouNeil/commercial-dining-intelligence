@@ -2,7 +2,8 @@ import pandas as pd
 import numpy as np
 import ast
 import re
-from sklearn.preprocessing import MultiLabelBinarizer, StandardScaler
+from sklearn.preprocessing import MultiLabelBinarizer
+from spatial_feature_engineer import SpatialFeatureEngineer
 
 class YelpDataProcessor:
     def __init__(self, business_path):
@@ -296,31 +297,37 @@ class YelpDataProcessor:
         self.load_data()
         self.clean_missing()
         self.filter_data(city=city, category_keywords=category_keywords)
+        
         self.process_hours()
-        self.process_categories()
         self.process_attributes()
         self.clean_specific_attributes()
-        self.finalize_feature_matrix(scale_features=scale_features)
-        if validate_output:
-            self.validate_feature_matrix(self.df)
+        
+        self.process_categories()
         return self.df
+
+    
 
 
 if __name__ == "__main__":
-    business_file = "yelp_dataset_csv/yelp_academic_dataset_business.csv"
+    business_file = "/Users/jackbai/Documents/ML_project/yelp_dataset_csv/yelp_academic_dataset_business.csv"
     
     try:
         # Create an instance
         processor = YelpDataProcessor(business_file)
         
         # Example 1: Run specifically for Philly Restaurants (as per notebook)
-        philly_restaurants_df = processor.process(city="Philadelphia", category_keywords=["Restaurants", "Food"])
-        philly_restaurants_df.to_csv("updated_philly_data.csv", index=False)
-        print(f"Data processed for Philadelphia successfully! Shape: {philly_restaurants_df.shape}")
+        processor.process(city="Philadelphia", category_keywords=["Restaurants", "Food"])
         
-        # Example 2: Run scalable operation on another city
-        # tucson_restaurants_df = processor.process(city="Tucson", category_keywords=["Restaurants", "Food"])
-        # print(f"Data processed for Tucson successfully! Shape: {tucson_restaurants_df.shape}")
+        spatial_engineer = SpatialFeatureEngineer(processor.df)
+        train_spatial, test_spatial = spatial_engineer.split_and_engineer_spatial_features()
+        train_spatial.to_csv("../../train_spatial.csv", index=False)
+        test_spatial.to_csv("../../test_spatial.csv", index=False)
+        print(f"Data processed and split for Philadelphia successfully! Train: {train_spatial.shape}, Test: {test_spatial.shape}")
+        
+        # Example 2: How to query everything (uncomment to process the whole dataset)
+        # all_restaurants_df = processor.process(category_keywords=["Restaurants", "Food"])
+        # all_restaurants_df.to_csv("updated_all_data.csv", index=False)
+        # print(f"Data processed for the entire dataset successfully! Shape: {all_restaurants_df.shape}")
         
     except FileNotFoundError:
         print(f"Dataset file '{business_file}' not found. Verify your path.")
