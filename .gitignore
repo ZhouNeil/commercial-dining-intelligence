@@ -210,10 +210,28 @@ __marimo__/
 # Custom Project Exclusions
 # =========================
 
-# Ignore all data files (crucial for the massive Yelp dataset)
+# Ignore all raw and processed data files
 data/*.csv
 data/*.json
 data/*.parquet
+data/processed_csv/*
+
+# Stratified slice (not in repo; regenerate: python scripts/build_representative_slice.py)
+data/slice_representative/
+
+# Local cleaned + mirror datasets + Yelp Photos bundle + built indexes (too large for GitHub)
+data/cleaned/
+data/kaggle/
+data/Yelp Photos/
+models/artifacts/
+
+# Ignore serialized machine learning models
+data/saved_models/*
+*.pkl
+
+# EXCEPT for .gitkeep files (Force Git to track the empty folder structure)
+!data/processed_csv/.gitkeep
+!data/saved_models/.gitkeep
 
 # Ignore Mac OS system files (if anyone is using a Mac)
 .DS_Store
