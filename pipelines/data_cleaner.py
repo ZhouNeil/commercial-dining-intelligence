@@ -3,6 +3,7 @@ import numpy as np
 import ast
 import re
 from sklearn.preprocessing import MultiLabelBinarizer
+from spatial_feature_engineer import SpatialFeatureEngineer
 
 class YelpDataProcessor:
     def __init__(self, business_path):
@@ -221,24 +222,32 @@ class YelpDataProcessor:
         self.load_data()
         self.clean_missing()
         self.filter_data(city=city, category_keywords=category_keywords)
+        
         self.process_hours()
-        self.process_categories()
         self.process_attributes()
         self.clean_specific_attributes()
+        
+        self.process_categories()
         return self.df
+
+    
 
 
 if __name__ == "__main__":
-    business_file = "../yelp_dataset_csv/yelp_academic_dataset_business.csv"
+    business_file = "/Users/jackbai/Documents/ML_project/yelp_dataset_csv/yelp_academic_dataset_business.csv"
     
     try:
         # Create an instance
         processor = YelpDataProcessor(business_file)
         
         # Example 1: Run specifically for Philly Restaurants (as per notebook)
-        philly_restaurants_df = processor.process(city="Philadelphia", category_keywords=["Restaurants", "Food"])
-        philly_restaurants_df.to_csv("updated_philly_data.csv", index=False)
-        print(f"Data processed for Philadelphia successfully! Shape: {philly_restaurants_df.shape}")
+        processor.process(city="Philadelphia", category_keywords=["Restaurants", "Food"])
+        
+        spatial_engineer = SpatialFeatureEngineer(processor.df)
+        train_spatial, test_spatial = spatial_engineer.split_and_engineer_spatial_features()
+        train_spatial.to_csv("../../train_spatial.csv", index=False)
+        test_spatial.to_csv("../../test_spatial.csv", index=False)
+        print(f"Data processed and split for Philadelphia successfully! Train: {train_spatial.shape}, Test: {test_spatial.shape}")
         
         # Example 2: How to query everything (uncomment to process the whole dataset)
         # all_restaurants_df = processor.process(category_keywords=["Restaurants", "Food"])
