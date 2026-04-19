@@ -74,11 +74,9 @@ def enrich_and_normalize_for_rl(user_lat, user_lon, candidates_df):
     Returns:
     pd.DataFrame: The DataFrame with two additional normalized columns for RL weighting:
                   - 'norm_distance_score': 0 to 1 (Closer distance = higher score. e.g., 1 is right next door, 0 is very far).
-                  - 'norm_rating_score': 0 to 1 (Map Yelp's 1-5 stars to a 0-1 scale).
     """
     # TODO for Ethan: 
     # 1. Call `calculate_haversine_distance` to get the actual kilometers.
     # 2. Reverse-normalize the distance (Closer -> Higher score). You can use a Min-Max Scaler or cap it at a max threshold (e.g., 10km).
-    # 3. Normalize the 'stars' rating: (stars - 1) / 4.0.
     # 4. Return the processed DataFrame.
     pass
