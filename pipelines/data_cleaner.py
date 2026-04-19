@@ -12,6 +12,7 @@ class YelpDataProcessor:
         """
         self.business_path = business_path
         self.df = None
+        self.scaler = None
         
     def load_data(self):
         print(f"Loading data from {self.business_path}...")
@@ -213,7 +214,81 @@ class YelpDataProcessor:
         if cols_with_none:
             self.df = self.df.drop(columns=cols_with_none)
 
-    def process(self, city=None, category_keywords=None):
+    def finalize_feature_matrix(self, scale_features=False):
+        """
+        Build a strict numeric matrix for downstream ML.
+        Rules:
+        - remove raw string/meta columns
+        - coerce all remaining columns to numeric
+        - fill missing with 0
+        - output strictly float64/int64-compatible matrix
+        """
+        if self.df is None:
+            raise ValueError("No dataframe loaded. Run process steps before finalization.")
+
+        df = self.df.copy()
+
+        # Raw metadata fields should not be part of model feature matrix X.
+        raw_non_feature_cols = [
+            'business_id', 'name', 'address', 'city', 'state', 'postal_code',
+            'hours', 'categories'
+        ]
+        existing_raw_cols = [c for c in raw_non_feature_cols if c in df.columns]
+        if existing_raw_cols:
+            df = df.drop(columns=existing_raw_cols)
+
+        # Convert booleans early.
+        bool_cols = df.select_dtypes(include=['bool']).columns.tolist()
+        if bool_cols:
+            df[bool_cols] = df[bool_cols].astype(int)
+
+        # Any lingering object-like columns are forced numeric; invalid parsing -> NaN -> 0.
+        for col in df.columns:
+            if not pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        # Clean non-finite values and enforce no-null matrix.
+        df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
+
+        # Keep output dtype contract simple and strict.
+        df = df.astype(np.float64)
+
+        if scale_features:
+            self.scaler = StandardScaler()
+            df.loc[:, :] = self.scaler.fit_transform(df.values)
+            # Keep post-scale type strict.
+            df = df.astype(np.float64)
+
+        self.df = df
+        return self.df
+
+    @staticmethod
+    def validate_feature_matrix(df):
+        """
+        Enforce Level-1 data contract:
+        1) no NaN
+        2) only int64/float64
+        3) np.array(df) must be valid
+        """
+        if df is None or df.empty:
+            raise ValueError("Feature matrix is empty.")
+
+        nan_count = int(df.isna().sum().sum())
+        if nan_count != 0:
+            raise ValueError(f"Feature matrix contains NaN values: {nan_count}")
+
+        allowed_dtypes = {np.dtype('int64'), np.dtype('float64')}
+        seen_dtypes = set(df.dtypes.tolist())
+        if not seen_dtypes.issubset(allowed_dtypes):
+            raise ValueError(
+                "Feature matrix contains invalid dtypes. "
+                f"Expected only int64/float64, got: {sorted(str(d) for d in seen_dtypes)}"
+            )
+
+        # Hard-check array conversion for downstream NumPy consumers.
+        _ = np.array(df)
+
+    def process(self, city=None, category_keywords=None, scale_features=False, validate_output=True):
         """
         Runs the entire data cleaning pipeline.
         :param city: Filter dataset to a specific city (str), optional

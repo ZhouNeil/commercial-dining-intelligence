@@ -1,4 +1,4 @@
-# Yelp Dual-Mode Commercial & Dining Intelligence App
+# Dual-Mode Commercial & Dining Intelligence App
 
 This repository contains the codebase for our Machine Learning course final project. The application utilizes the Yelp Open Dataset to provide insights for both prospective merchants and tourists.
 
@@ -8,23 +8,25 @@ Our codebase strictly follows the Separation of Concerns (SoC) principle. The di
 
 ```text
 commercial-dining-intelligence/
-├── app/                        # Streamlit UI (main dashboard and visual components)
-│   ├── main.py                 # Dual-mode web app entry point (Role 5)
-│   └── components.py           # Reusable UI widgets like maps and charts (Role 5)
-├── data/                       # Local storage for cleaned feature CSVs (Git-ignored)
-├── pipelines/                  # Data engineering and feature extraction
-│   ├── data_cleaner.py         # Transforms raw data into numerical matrices (Role 1)
-│   └── feature_pca.py          # Applies PCA for business DNA extraction (Role 6)
+├── app/                        # Streamlit UI & Controller Logic (Role 5)
+│   └── main.py                 # Dual-mode entry point and API Glue Code (Controller)
+├── data/                       # Local storage for datasets and models (Git-ignored)
+│   ├── processed_csv/          # Cleaned, city-specific feature matrices (e.g., output_philly.csv)
+│   └── saved_models/           # Serialized city-specific predictive models (e.g., lr_philly.pkl)
+├── pipelines/                  # Data engineering, feature extraction & aggregation
+│   ├── data_cleaner.py         # Transforms raw Yelp JSONs into structured matrices (Role 1)
+│   ├── feature_pca.py          # Applies PCA for business DNA extraction (Role 5)
+│   └── feature_aggregator.py   # Online engine to calculate density & avg ratings (Role 1)
 ├── models/                     # Core ML algorithms and predictive engines
-│   ├── kmeans_scratch.py       # Pure NumPy K-Means clustering algorithm (Role 2)
-│   ├── tourist_recommender.py  # Tourist Mode embedding & semantic search (Role 3)
-│   ├── merchant_predictor.py   # Merchant Mode survival/rating prediction (Role 4)
-│   └── rl_feedback_loop.py     # Reinforcement Learning & A/B testing weights (Role 6)
-├── notebooks/                  # Jupyter notebooks for EDA and MVP testing
-├── scripts/                    # Shell scripts for environment setup
-├── .gitignore                  # Prevents data/ and .venv/ from being tracked
-├── README.md                   # Project architecture and setup instructions
-└── requirements.txt            # Locked dependency registry for CI/CD
+│   ├── knn_scratch.py          # Pure NumPy k-NN Engine (Radius & Top-K) (Role 2)
+│   ├── tourist_recommender.py  # Cross-modal embeddings & NLP representation (Role 3)
+│   ├── merchant_predictor.py   # Merchant survival/rating classification & regression (Role 4)
+│   └── rl_feedback_loop.py     # Multi-Armed Bandit environment & weight updates (Role 6)
+├── notebooks/                  # Jupyter notebooks for EDA, PCA visualization, and MVP testing
+├── scripts/                    # Shell scripts for environment setup and pipeline execution
+├── .gitignore                  # Prevents data/ and large model files from being tracked
+├── README.md                   # Project architecture, API contracts, and setup instructions
+└── requirements.txt            # Locked dependency registry for CI/CD (Role 6)
 ```
 
 ## 📥 Data Setup
@@ -35,7 +37,7 @@ Due to the massive size of the Yelp Open Dataset, raw and cleaned data files are
 * Fetch the cleaned dataset (e.g., `output_philly.csv`) from our team's shared Google: [`https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing`](https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing)
 
 **2. Place it in the Repo:**
-* Move the downloaded files directly into the `data/` folder. Do not force-add data files to Git.
+* Move the downloaded files directly into the `data/processed_csv/` folder. Do not force-add data files to Git.
 
 ## 🚀 Setup Environment
 
