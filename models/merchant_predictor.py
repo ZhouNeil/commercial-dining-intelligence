@@ -1,414 +1,210 @@
 import os
 import joblib
-import numpy as np
 import pandas as pd
-
-from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
+import numpy as np
+from sklearn.neighbors import BallTree
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.svm import SVC
-from sklearn.ensemble import VotingClassifier, RandomForestRegressor, HistGradientBoostingRegressor
-from sklearn.metrics import (
-    classification_report,
-    confusion_matrix,
-    roc_auc_score,
-    accuracy_score,
-    mean_squared_error,
-    mean_absolute_error,
-    r2_score
-)
+from sklearn.metrics import (accuracy_score, mean_squared_error, roc_auc_score, 
+                             f1_score, precision_score, recall_score, 
+                             r2_score, mean_absolute_error)
 
-# =========================================================
-# Config
-# =========================================================
+MODEL_DIR = "artifacts"
 
-DATA_PATH = "updated_philly_data.csv"   # change if needed
-MODEL_DIR = "models/artifacts"
-os.makedirs(MODEL_DIR, exist_ok=True)
-
-RANDOM_STATE = 42
-N_CLUSTERS = 8
-N_PCA_COMPONENTS = 10
-
-# =========================================================
-# Helper: choose safe feature columns
-# =========================================================
-
-def get_feature_columns(df: pd.DataFrame):
-    """
-    Build a safe feature set for prediction.
-    We exclude identifiers, raw text-like columns, and leakage-prone columns.
-
-    Red line: avoid using review_count because for a "new" shop this is future information.
-    """
-
-    exclude_cols = {
-        "business_id",
-        "name",
-        "address",
-        "city",
-        "state",
-        #"postal_code",
-        "categories",   # raw text
-        "hours",        # raw dictionary/string
-        "is_open",      # target
-        "stars",        # target
-        #"review_count"  # leakage-prone for new shop prediction
-    }
-
-    feature_cols = [col for col in df.columns if col not in exclude_cols]
-
-    return feature_cols
-
-# =========================================================
-# Step 1: load data
-# =========================================================
-
-def load_data(path=DATA_PATH):
-    df = pd.read_csv(path)
-
-    # Make sure required columns exist
-    required_cols = ["is_open", "stars", "latitude", "longitude", "attr_restaurantspricerange2"]
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}")
-
-    return df
-
-# =========================================================
-# Step 2: prepare base numeric features
-# =========================================================
-
-def prepare_base_features(df: pd.DataFrame):
-    feature_cols = get_feature_columns(df)
-
-    X_base = df[feature_cols].copy()
-
-    # Force everything numeric if possible
-    for col in X_base.columns:
-        X_base[col] = pd.to_numeric(X_base[col], errors="coerce")
-
-    # Fill missing numeric values
-    X_base = X_base.fillna(0)
-
-    y_survival = df["is_open"].astype(int)
-    y_rating = df["stars"].astype(float)
-
-    return X_base, y_survival, y_rating
-
-# =========================================================
-# Step 3: create Cluster_ID using KMeans
-# =========================================================
-
-def build_cluster_features(df: pd.DataFrame):
-    """
-    Build cluster_id from location + price.
-    This matches the project requirement that Merchant Mode should use Cluster_ID.
-    """
-
-    cluster_input_cols = ["latitude", "longitude", "attr_restaurantspricerange2"]
-    cluster_df = df[cluster_input_cols].copy().fillna(0)
-
-    scaler_cluster = StandardScaler()
-    cluster_scaled = scaler_cluster.fit_transform(cluster_df)
-
-    kmeans = KMeans(
-        n_clusters=N_CLUSTERS,
-        random_state=RANDOM_STATE,
-        n_init=10
-    )
-    cluster_ids = kmeans.fit_predict(cluster_scaled)
-
-    return cluster_ids, scaler_cluster, kmeans
-
-# =========================================================
-# Step 4: create PCA "business DNA" features
-# =========================================================
-
-def build_pca_features(X_base: pd.DataFrame):
-    """
-    PCA over the full safe feature matrix.
-    This gives compressed business-DNA style features.
-    """
-
-    scaler_pca = StandardScaler()
-    X_scaled = scaler_pca.fit_transform(X_base)
-
-    n_components = min(N_PCA_COMPONENTS, X_base.shape[1])
-    pca = PCA(n_components=n_components, random_state=RANDOM_STATE)
-    X_pca = pca.fit_transform(X_scaled)
-
-    pca_cols = [f"pca_{i+1}" for i in range(X_pca.shape[1])]
-    X_pca_df = pd.DataFrame(X_pca, columns=pca_cols, index=X_base.index)
-
-    return X_pca_df, scaler_pca, pca
-
-# =========================================================
-# Step 5: assemble final X
-# =========================================================
-
-def build_final_feature_matrix(df: pd.DataFrame):
-    """
-    Final X = [Cluster_ID, price, PCA business DNA scores]
-    This follows your role description exactly.
-    """
-
-    X_base, y_survival, y_rating = prepare_base_features(df)
-    
-    cluster_ids, scaler_cluster, kmeans = build_cluster_features(df)
-    X_pca_df, scaler_pca, pca = build_pca_features(X_base)
-
-    X_final = pd.DataFrame(index=df.index)
-    X_final["cluster_id"] = cluster_ids
-    X_final["price"] = df["attr_restaurantspricerange2"].fillna(0).astype(float)
-
-    for col in X_pca_df.columns:
-        X_final[col] = X_pca_df[col]
+class AblationMerchantPredictor:
+    def __init__(self, train_path="../../train_spatial.csv", test_path="../../test_spatial.csv"):
+        self.train_path = train_path
+        self.test_path = test_path
+        self.train_df = None
+        self.test_df = None
+        self.cat_cols = None
+        self.time_cols = None
+        self.base_attr_cols = None
+        os.makedirs(MODEL_DIR, exist_ok=True)
         
-    for col in X_base.columns:
-        if col not in X_final.columns:
-            X_final[col] = X_base[col]
+    def load_data(self):
+        print(f"Loading pre-computed spatial training data from {self.train_path}...")
+        self.train_df = pd.read_csv(self.train_path)
+        print(f"Loading pre-computed spatial testing data from {self.test_path}...")
+        self.test_df = pd.read_csv(self.test_path)
+        self.cat_cols = [c for c in self.train_df.columns if c.startswith('cat_')]
+        self.time_cols = [c for c in self.train_df.columns if c.startswith('time_')]
+        self.base_attr_cols = ['attr_restaurantspricerange2'] if 'attr_restaurantspricerange2' in self.train_df.columns else []
 
-    return X_final, y_survival, y_rating, scaler_cluster, kmeans, scaler_pca, pca
+    def train_pipeline(self):
+        self.load_data()
+        
+        train_df = self.train_df
+        test_df = self.test_df
+        
+        print("\n--- 1. DIAGNOSTICS: TRAIN vs RANDOM HOLDOUT ---")
+        print(f"Train size: {len(train_df)}, Test size: {len(test_df)}")
+        print(f"Train Survival Rate: {train_df['is_open'].mean():.3f} vs Test Survival Rate: {test_df['is_open'].mean():.3f}")
+        print(f"Train Avg Stars: {train_df['stars'].mean():.3f} vs Test Avg Stars: {test_df['stars'].mean():.3f}")
+        
+        print("\n--- 2. SPATIAL FEATURES PRE-LOADED ---")
+        print(f"Train Median 0.5km Count: {train_df['count_all_0.5km'].median()} vs Test Median Density: {test_df['count_all_0.5km'].median()}")
+        print(f"Train Median Nearest Competitor: {train_df['dist_nearest_same_cat'].median():.3f}km vs Test Median: {test_df['dist_nearest_same_cat'].median():.3f}km")
 
-# =========================================================
-# Step 6: train classifier for survival
-# =========================================================
+        families = {
+            "Base": self.cat_cols + self.time_cols + self.base_attr_cols,
+            "LatLon": ["latitude", "longitude"],
+            "Distances": ["log_dist_nearest_same_cat", "dist_nearest_same_cat"],
+            "Counts": [c for c in train_df.columns if "count" in c and "log_" in c or "has_" in c or "low_" in c],
+            "Ratios": [c for c in train_df.columns if "ratio" in c],
+            "Gap": [c for c in train_df.columns if "gap" in c],
+            "Diversity": [c for c in train_df.columns if "diversity" in c]
+        }
+        
+        X_train_full = train_df.fillna(0)
+        X_test_full = test_df.fillna(0)
+        
+        y_surv_train = train_df['is_open']
+        y_surv_test = test_df['is_open']
+        
+        y_stars_train = train_df['stars']
+        y_stars_test = test_df['stars']
+        
+        models = {
+            "LogisticRegression": LogisticRegression(max_iter=2000, class_weight='balanced'),
+            "HistGB_Shallow(D=3)": HistGradientBoostingClassifier(max_depth=3, random_state=42),
+            "HistGB_Deep(Def)": HistGradientBoostingClassifier(random_state=42)
+        }
+        
+        print("\n--- 3. SURVIVAL ABLATION STUDY (Random Holdout) ---")
+        best_auc = 0
+        
+        def get_optimal_f1(y_true, y_prob):
+            best_f1, best_thresh = 0.0, 0.5
+            for thresh in np.linspace(0.0, 1.0, 101):
+                f1 = f1_score(y_true, (y_prob >= thresh).astype(int), zero_division=0)
+                if f1 > best_f1:
+                    best_f1, best_thresh = f1, thresh
+            return best_f1, best_thresh
+        
+        baselines = ["Base", "Base + LatLon"]
+        base_features = [families["Base"], families["Base"] + families["LatLon"]]
+        
+        results = []
+        for name, feats in zip(baselines, base_features):
+            for m_name, model in models.items():
+                model.fit(X_train_full[feats], y_surv_train)
+                prob = model.predict_proba(X_test_full[feats])[:, 1]
+                auc = roc_auc_score(y_surv_test, prob)
+                
+                # Iterate threshold 0.0 to 1.0 to maximize F1
+                max_f1, _ = get_optimal_f1(y_surv_test, prob)
+                
+                train_prob = model.predict_proba(X_train_full[feats])[:, 1]
+                train_auc = roc_auc_score(y_surv_train, train_prob)
+                
+                results.append((m_name, name, train_auc, auc, max_f1))
+                if auc > best_auc:
+                    best_auc = auc
+                    
+        base_threshold_auc = max([r[3] for r in results if r[1] == "Base"])
+        print(f"Global Baseline Performance Ceiling: {base_threshold_auc:.4f}")
+        
+        current_best_features = families["Base"].copy()
+        current_best_name = "Base"
+        current_best_auc = base_threshold_auc
+        
+        for fam_name in ["Distances", "Counts", "Ratios", "Gap", "Diversity"]:
+            test_feats = current_best_features + families[fam_name]
+            test_name = f"{current_best_name} + {fam_name}"
+            
+            test_model = HistGradientBoostingClassifier(max_depth=3, random_state=42)
+            test_model.fit(X_train_full[test_feats], y_surv_train)
+            prob = test_model.predict_proba(X_test_full[test_feats])[:, 1]
+            auc = roc_auc_score(y_surv_test, prob)
+            
+            if auc > current_best_auc:
+                print(f" [+] Keeping {fam_name}: AUC improved from {current_best_auc:.4f} -> {auc:.4f}")
+                current_best_features = test_feats
+                current_best_name = test_name
+                current_best_auc = auc
+            else:
+                print(f" [-] Rejecting {fam_name}: AUC dropped to {auc:.4f}")
+                
+        print("\n--- 4. FINAL COMPARISON TABLE ---")
+        print(f"{'Model Algorithm':<25} | {'Feature Set Baseline':<30} | {'Train AUC':<9} | {'Test AUC':<9} | {'Test F1':<7}")
+        print("-" * 87)
+        for r in results:
+            print(f"{r[0]:<25} | {r[1]:<30} | {r[2]:.4f}    | {r[3]:.4f}    | {r[4]:.4f}")
+            
+        final_model = HistGradientBoostingClassifier(max_depth=3, random_state=42)
+        final_model.fit(X_train_full[current_best_features], y_surv_train)
+        prob = final_model.predict_proba(X_test_full[current_best_features])[:, 1]
+        train_prob = final_model.predict_proba(X_train_full[current_best_features])[:, 1]
+        
+        opt_f1, opt_thresh = get_optimal_f1(y_surv_test, prob)
+        print(f"\nFinal Model Optimal Threshold for F1 Score: {opt_thresh:.2f}")
+        
+        print("-" * 87)
+        print(f"{'Final Optimized Config':<25} | {current_best_name:<30} | {roc_auc_score(y_surv_train, train_prob):.4f}    | {roc_auc_score(y_surv_test, prob):.4f}    | {opt_f1:.4f}")
 
-def train_survival_model(X_train, y_train, X_test, y_test):
-    """
-    Train robust classifier with class imbalance handling.
-    We use soft voting over Logistic Regression + SVC.
-    """
-
-    lr = LogisticRegression(
-        max_iter=2000,
-        class_weight="balanced",
-        random_state=RANDOM_STATE
-    )
-
-    svm = SVC(
-        probability=True,
-        class_weight="balanced",
-        random_state=RANDOM_STATE
-    )
-
-    clf = VotingClassifier(
-        estimators=[
-            ("lr", lr),
-            ("svm", svm)
-        ],
-        voting="soft"
-    )
-
-    clf.fit(X_train, y_train)
-
-    y_pred = clf.predict(X_test)
-    y_prob = clf.predict_proba(X_test)[:, 1]
-
-    print("\n========== Survival Model Evaluation ==========")
-    print("Accuracy:", round(accuracy_score(y_test, y_pred), 4))
-    print("ROC-AUC:", round(roc_auc_score(y_test, y_prob), 4))
-    print("\nConfusion Matrix:")
-    print(confusion_matrix(y_test, y_pred))
-    print("\nClassification Report:")
-    print(classification_report(y_test, y_pred))
-
-    return clf
-
-# =========================================================
-# Step 7: train regressor for stars
-# =========================================================
-
-def train_rating_model(X_train, y_train, X_test, y_test):
-    """
-    Train rating predictor.
-    RandomForestRegressor is more flexible than plain LinearRegression.
-    If your instructor strictly wants Linear Regression, swap it in below.
-    """
-
-    reg = HistGradientBoostingRegressor(
-        max_iter=500,
-        learning_rate=0.05,
-        random_state=RANDOM_STATE
-    )
-
-    reg.fit(X_train, y_train)
-    preds = reg.predict(X_test)
-
-    print("\n========== Rating Model Evaluation ==========")
-    print("RMSE:", round(np.sqrt(mean_squared_error(y_test, preds)), 4))
-    print("MAE:", round(mean_absolute_error(y_test, preds), 4))
-    print("R^2:", round(r2_score(y_test, preds), 4))
-
-    return reg
-
-# =========================================================
-# Step 8: save artifacts
-# =========================================================
-
-def save_artifacts(
-    survival_model,
-    rating_model,
-    scaler_cluster,
-    kmeans,
-    scaler_pca,
-    pca,
-    feature_names
-):
-    joblib.dump(survival_model, os.path.join(MODEL_DIR, "survival_model.pkl"))
-    joblib.dump(rating_model, os.path.join(MODEL_DIR, "rating_model.pkl"))
-    joblib.dump(scaler_cluster, os.path.join(MODEL_DIR, "cluster_scaler.pkl"))
-    joblib.dump(kmeans, os.path.join(MODEL_DIR, "kmeans_model.pkl"))
-    joblib.dump(scaler_pca, os.path.join(MODEL_DIR, "pca_scaler.pkl"))
-    joblib.dump(pca, os.path.join(MODEL_DIR, "pca_model.pkl"))
-    joblib.dump(feature_names, os.path.join(MODEL_DIR, "base_feature_names.pkl"))
-
-    print(f"\nSaved all artifacts to: {MODEL_DIR}")
-
-# =========================================================
-# Step 9: training pipeline
-# =========================================================
-
-def train_all(path=DATA_PATH):
-    df = load_data(path)
-
-    # Build final matrix
-    X_final, y_survival, y_rating, scaler_cluster, kmeans, scaler_pca, pca = build_final_feature_matrix(df)
-
-    # Same split indices for both tasks
-    train_idx, test_idx = train_test_split(
-        X_final.index,
-        test_size=0.2,
-        random_state=RANDOM_STATE,
-        stratify=y_survival
-    )
-
-    X_train = X_final.loc[train_idx]
-    X_test = X_final.loc[test_idx]
-
-    y_train_survival = y_survival.loc[train_idx]
-    y_test_survival = y_survival.loc[test_idx]
-
-    y_train_rating = y_rating.loc[train_idx]
-    y_test_rating = y_rating.loc[test_idx]
-
-    # Train models
-    survival_model = train_survival_model(X_train, y_train_survival, X_test, y_test_survival)
-    rating_model = train_rating_model(X_train, y_train_rating, X_test, y_test_rating)
-
-    # Save feature list used before PCA
-    X_base, _, _ = prepare_base_features(df)
-    feature_names = list(X_base.columns)
-
-    save_artifacts(
-        survival_model,
-        rating_model,
-        scaler_cluster,
-        kmeans,
-        scaler_pca,
-        pca,
-        feature_names
-    )
-
-# =========================================================
-# Step 10: frontend-friendly prediction function
-# =========================================================
-
-def prepare_single_business_features(input_dict: dict):
-    """
-    input_dict should contain the raw business features needed by the same schema
-    as the original training data columns (except target columns).
-
-    Example:
-    {
-        "latitude": 39.95,
-        "longitude": -75.16,
-        "attr_restaurantspricerange2": 2,
-        "cat_pizza": 1,
-        "cat_restaurants": 1,
-        ...
-    }
-    """
-
-    feature_names = joblib.load(os.path.join(MODEL_DIR, "base_feature_names.pkl"))
-    scaler_cluster = joblib.load(os.path.join(MODEL_DIR, "cluster_scaler.pkl"))
-    kmeans = joblib.load(os.path.join(MODEL_DIR, "kmeans_model.pkl"))
-    scaler_pca = joblib.load(os.path.join(MODEL_DIR, "pca_scaler.pkl"))
-    pca = joblib.load(os.path.join(MODEL_DIR, "pca_model.pkl"))
-
-    row = {col: 0 for col in feature_names}
-    row.update(input_dict)
-
-    X_base_single = pd.DataFrame([row], columns=feature_names).fillna(0)
-
-    # cluster features
-    cluster_input = X_base_single[["latitude", "longitude", "attr_restaurantspricerange2"]].copy()
-    cluster_scaled = scaler_cluster.transform(cluster_input)
-    cluster_id = kmeans.predict(cluster_scaled)[0]
-
-    # pca features
-    X_scaled = scaler_pca.transform(X_base_single)
-    X_pca = pca.transform(X_scaled)
-
-    final_row = pd.DataFrame()
-    final_row["cluster_id"] = [cluster_id]
-    final_row["price"] = [float(X_base_single["attr_restaurantspricerange2"].iloc[0])]
-
-    for i in range(X_pca.shape[1]):
-        final_row[f"pca_{i+1}"] = X_pca[:, i]
-
-    for col in X_base_single.columns:
-        if col not in final_row.columns:
-            final_row[col] = X_base_single[col]
-
-    return final_row
-
-def predict_business_success(input_dict: dict):
-    """
-    Returns smooth probability for survival and predicted star rating.
-    This satisfies the DoD requirement for predict_proba().
-    """
-
-    survival_model = joblib.load(os.path.join(MODEL_DIR, "survival_model.pkl"))
-    rating_model = joblib.load(os.path.join(MODEL_DIR, "rating_model.pkl"))
-
-    X_input = prepare_single_business_features(input_dict)
-
-    survival_probability = survival_model.predict_proba(X_input)[0][1]
-    predicted_rating = rating_model.predict(X_input)[0]
-
-    return {
-        "success_probability": float(round(survival_probability, 4)),
-        "expected_rating": float(round(predicted_rating, 2))
-    }
-
-# =========================================================
-# Run training
-# =========================================================
+        print("\n--- 5. STARS REGRESSION ABLATION STUDY ---")
+        regressors = {
+            "LinearRegression": LinearRegression(),
+            "HistGB_Reg_Shallow(D=3)": HistGradientBoostingRegressor(max_depth=3, random_state=42),
+            "HistGB_Reg_Deep(Def)": HistGradientBoostingRegressor(random_state=42)
+        }
+        
+        best_mae = float('inf')
+        
+        reg_results = []
+        for name, feats in zip(baselines, base_features):
+            for m_name, model in regressors.items():
+                model.fit(X_train_full[feats], y_stars_train)
+                pred = model.predict(X_test_full[feats])
+                mae = mean_absolute_error(y_stars_test, pred)
+                
+                train_pred = model.predict(X_train_full[feats])
+                train_mae = mean_absolute_error(y_stars_train, train_pred)
+                
+                reg_results.append((m_name, name, train_mae, mae))
+                if mae < best_mae:
+                    best_mae = mae
+                    
+        base_threshold_mae = min([r[3] for r in reg_results if r[1] == "Base"])
+        print(f"Global Baseline Performance Ceiling (MAE): {base_threshold_mae:.4f}")
+        
+        current_best_features_reg = families["Base"].copy()
+        current_best_name_reg = "Base"
+        current_best_mae = base_threshold_mae
+        
+        for fam_name in ["Distances", "Counts", "Ratios", "Gap", "Diversity"]:
+            test_feats = current_best_features_reg + families[fam_name]
+            test_name = f"{current_best_name_reg} + {fam_name}"
+            
+            test_model = HistGradientBoostingRegressor(max_depth=3, random_state=42)
+            test_model.fit(X_train_full[test_feats], y_stars_train)
+            pred = test_model.predict(X_test_full[test_feats])
+            mae = mean_absolute_error(y_stars_test, pred)
+            
+            if mae < current_best_mae:
+                print(f" [+] Keeping {fam_name}: MAE improved from {current_best_mae:.4f} -> {mae:.4f}")
+                current_best_features_reg = test_feats
+                current_best_name_reg = test_name
+                current_best_mae = mae
+            else:
+                print(f" [-] Rejecting {fam_name}: MAE worsened to {mae:.4f}")
+                
+        print("\n--- 6. REGRESSION FINAL COMPARISON TABLE ---")
+        print(f"{'Model Algorithm':<25} | {'Feature Set Baseline':<30} | {'Train MAE':<9} | {'Test MAE':<9}")
+        print("-" * 80)
+        for r in reg_results:
+            print(f"{r[0]:<25} | {r[1]:<30} | {r[2]:.4f}    | {r[3]:.4f}")
+            
+        print("-" * 80)
+        final_reg_model = HistGradientBoostingRegressor(max_depth=3, random_state=42)
+        final_reg_model.fit(X_train_full[current_best_features_reg], y_stars_train)
+        pred = final_reg_model.predict(X_test_full[current_best_features_reg])
+        train_pred = final_reg_model.predict(X_train_full[current_best_features_reg])
+        
+        print(f"{'Final Optimized Config':<25} | {current_best_name_reg:<30} | {mean_absolute_error(y_stars_train, train_pred):.4f}    | {mean_absolute_error(y_stars_test, pred):.4f}")
 
 if __name__ == "__main__":
-    train_all(DATA_PATH)
-
-    # Example inference
-    example_business = {
-        "latitude": 39.9526,
-        "longitude": -75.1652,
-        "attr_restaurantspricerange2": 2,
-        "time_is_open_morning": 1,
-        "time_is_open_latenight": 0,
-        "time_open_on_weekends": 1,
-        "cat_restaurants": 1,
-        "cat_pizza": 1,
-        "cat_italian": 1,
-        "attr_restaurantsdelivery": 1,
-        "attr_outdoorseating": 0,
-        "attr_restaurantsreservations": 0,
-        "attr_goodforkids": 1
-    }
-
-    result = predict_business_success(example_business)
-    print("\nExample Prediction:")
-    print(result)
+    predictor = AblationMerchantPredictor()
+    predictor.train_pipeline()
