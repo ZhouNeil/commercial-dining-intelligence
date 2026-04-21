@@ -3,15 +3,22 @@ import sys
 import joblib
 import pandas as pd
 import numpy as np
+
+# Ensure we can import pipelines and locate artifacts robustly regardless of working directory
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) # commercial-dining-intelligence
+PROJECT_ROOT = os.path.dirname(BASE_DIR)                            # ML_project
+sys.path.append(BASE_DIR)
+
 from pipelines.spatial_feature_engineer import SpatialFeatureEngineer
 
-def run_simulation(city="Philadelphia"):
+def run_simulation(city="Philadelphia", user_target_coord=(39.9526, -75.1652)):
     print(f"--- MOCKING LIVE USER SELECTION ON FRONTEND ---")
     print(f"1. Loading reference data for {city} into server memory...")
     
     # In production, the backend would just load the raw output of YelpDataProcessor
     # Here, we can cheat and load the global train file, but only keep Philly rows
-    global_ref = pd.read_csv("../train_spatial.csv")
+    data_path = os.path.join(PROJECT_ROOT, "train_spatial.csv")
+    global_ref = pd.read_csv(data_path)
     
     # Try to filter by city if the column exists, otherwise just use a subset (e.g. first 2000 rows as 'local context')
     if 'city' in global_ref.columns:
@@ -23,8 +30,8 @@ def run_simulation(city="Philadelphia"):
     print(f"   Loaded {len(local_ref)} local restaurants perfectly.")
 
     # A user drops a pin via maps API for their new concept
-    # Coordinates in central Philadelphia roughly
-    user_target_coord = (39.9526, -75.1652) 
+    # Coordinates specified dynamically based on the city
+    # user_target_coord is passed into the function
     
     # They specify it is a fast-food coffee shop
     cat_cols = [c for c in local_ref.columns if c.startswith('cat_')]
@@ -52,7 +59,8 @@ def run_simulation(city="Philadelphia"):
     # In production, ensure the features mapped here perfectly correspond to 'current_best_features'
     # For now, let's just grab the feature layout directly from the trained model's expectation if possible
     # Note: For prediction, HistGradientBoosting expects matching columns.
-    survival_model = joblib.load("models/artifacts/global_survival_model.pkl")
+    survival_model_path = os.path.join(BASE_DIR, "models", "artifacts", "global_survival_model.pkl")
+    survival_model = joblib.load(survival_model_path)
     
     # We create a dummy matching df populated with zeros initially
     model_df = pd.DataFrame(0.0, index=[0], columns=survival_model.feature_names_in_)
@@ -73,7 +81,8 @@ def run_simulation(city="Philadelphia"):
 
     print("\n--- PREDICTION ---")
     surv_prob = survival_model.predict_proba(model_df)[:, 1][0]
-    rating_model = joblib.load("models/artifacts/global_rating_model.pkl")
+    rating_model_path = os.path.join(BASE_DIR, "models", "artifacts", "global_rating_model.pkl")
+    rating_model = joblib.load(rating_model_path)
     
     # Rating model has a different configured feature set than Survival model
     model_df_reg = pd.DataFrame(0.0, index=[0], columns=rating_model.feature_names_in_)
@@ -92,4 +101,5 @@ def run_simulation(city="Philadelphia"):
     print("-----------------------------------------------")
 
 if __name__ == "__main__":
-    run_simulation()
+    # Central New Orleans coordinates
+    run_simulation(city="New Orleans", user_target_coord=(29.9511, -90.0715))
