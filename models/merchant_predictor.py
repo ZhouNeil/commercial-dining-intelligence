@@ -10,7 +10,8 @@ from sklearn.metrics import (accuracy_score, mean_squared_error, roc_auc_score,
                              f1_score, precision_score, recall_score, 
                              r2_score, mean_absolute_error)
 
-MODEL_DIR = "artifacts"
+# Force artifacts into models/artifacts regardless of where script is run
+MODEL_DIR = os.path.join(os.path.dirname(__file__), "artifacts")
 
 class AblationMerchantPredictor:
     def __init__(self, train_path="../../train_spatial.csv", test_path="../../test_spatial.csv"):
@@ -54,7 +55,8 @@ class AblationMerchantPredictor:
             "Counts": [c for c in train_df.columns if "count" in c and "log_" in c or "has_" in c or "low_" in c],
             "Ratios": [c for c in train_df.columns if "ratio" in c],
             "Gap": [c for c in train_df.columns if "gap" in c],
-            "Diversity": [c for c in train_df.columns if "diversity" in c]
+            "Diversity": [c for c in train_df.columns if "diversity" in c],
+            "Semantic": ["avg_rating_top5_similar", "survival_top5_similar"]
         }
         
         X_train_full = train_df.fillna(0)
@@ -110,7 +112,7 @@ class AblationMerchantPredictor:
         current_best_name = "Base"
         current_best_auc = base_threshold_auc
         
-        for fam_name in ["Distances", "Counts", "Ratios", "Gap", "Diversity"]:
+        for fam_name in ["Distances", "Counts", "Ratios", "Gap", "Diversity", "Semantic"]:
             test_feats = current_best_features + families[fam_name]
             test_name = f"{current_best_name} + {fam_name}"
             
@@ -144,6 +146,10 @@ class AblationMerchantPredictor:
         print("-" * 87)
         print(f"{'Final Optimized Config':<25} | {current_best_name:<30} | {roc_auc_score(y_surv_train, train_prob):.4f}    | {roc_auc_score(y_surv_test, prob):.4f}    | {opt_f1:.4f}")
 
+        # Save classification model for website backend inference
+        print(f"\nSaving ultimate Survival classifier to {MODEL_DIR}/global_survival_model.pkl...")
+        joblib.dump(final_model, f"{MODEL_DIR}/global_survival_model.pkl")
+
         print("\n--- 5. STARS REGRESSION ABLATION STUDY ---")
         regressors = {
             "LinearRegression": LinearRegression(),
@@ -174,7 +180,7 @@ class AblationMerchantPredictor:
         current_best_name_reg = "Base"
         current_best_mae = base_threshold_mae
         
-        for fam_name in ["Distances", "Counts", "Ratios", "Gap", "Diversity"]:
+        for fam_name in ["Distances", "Counts", "Ratios", "Gap", "Diversity", "Semantic"]:
             test_feats = current_best_features_reg + families[fam_name]
             test_name = f"{current_best_name_reg} + {fam_name}"
             
@@ -204,6 +210,9 @@ class AblationMerchantPredictor:
         train_pred = final_reg_model.predict(X_train_full[current_best_features_reg])
         
         print(f"{'Final Optimized Config':<25} | {current_best_name_reg:<30} | {mean_absolute_error(y_stars_train, train_pred):.4f}    | {mean_absolute_error(y_stars_test, pred):.4f}")
+
+        print(f"\nSaving ultimate Regression model to {MODEL_DIR}/global_rating_model.pkl...")
+        joblib.dump(final_reg_model, f"{MODEL_DIR}/global_rating_model.pkl")
 
 if __name__ == "__main__":
     predictor = AblationMerchantPredictor()
