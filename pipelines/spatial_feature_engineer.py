@@ -1,6 +1,10 @@
 import pandas as pd
 import numpy as np
 from sklearn.neighbors import BallTree
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from models.knn_scratch import KNNRetrievalEngine
 from sklearn.model_selection import train_test_split
 
 class SpatialFeatureEngineer:
@@ -26,6 +30,9 @@ class SpatialFeatureEngineer:
             out[f'count_same_cat_{r_str}'] = np.zeros(M)
             out[f'avg_rating_same_cat_{r_str}'] = np.zeros(M)
             out[f'survival_same_cat_{r_str}'] = np.zeros(M)
+            
+        out['avg_rating_top5_similar'] = np.zeros(M)
+        out['survival_top5_similar'] = np.zeros(M)
 
         out['dist_nearest_same_cat'] = np.zeros(M)
         
@@ -83,6 +90,22 @@ class SpatialFeatureEngineer:
                     out[f'avg_rating_same_cat_{r_str}'][i] = global_stars
                     out[f'survival_same_cat_{r_str}'][i] = global_surv
 
+            if hasattr(self, 'category_knn') and self.category_knn is not None:
+                top_k_req = 6 if exclude_self else 5
+                top_idxs, top_sims = self.category_knn.retrieve_top_k(target_cats[i], k=top_k_req, metric='cosine')
+                if exclude_self:
+                    mask = (top_idxs != i)
+                    top_idxs = top_idxs[mask][:5]
+                else:
+                    top_idxs = top_idxs[:5]
+                
+                if len(top_idxs) > 0:
+                    out['avg_rating_top5_similar'][i] = ref_stars[top_idxs].mean()
+                    out['survival_top5_similar'][i] = ref_surv[top_idxs].mean()
+                else:
+                    out['avg_rating_top5_similar'][i] = global_stars
+                    out['survival_top5_similar'][i] = global_surv
+
         # Feature Transformations
         for r in [0.5, 1.0, 3.0]:
             r_str = f"{r}km"
@@ -135,6 +158,10 @@ class SpatialFeatureEngineer:
         ref_surv = train_df['is_open'].values
         ref_revs = train_df['review_count'].values
         
+        print("Initializing Custom KNN for Semantic Categories...")
+        self.category_knn = KNNRetrievalEngine()
+        self.category_knn.fit(ref_cats)
+        
         print("Computing training spatial features (excluding self)...")
         train_feats = self.compute_local_features(train_coords, ref_cats, train_tree, ref_cats, ref_stars, ref_surv, ref_revs, exclude_self=True)
         
@@ -149,11 +176,38 @@ class SpatialFeatureEngineer:
         
         return train_spatial_df, test_spatial_df
 
-    def engineer_single_target(self, target_coord, target_cat, reference_df):
+    def engineer_single_target(self, target_coord, target_cat_array, reference_df):
         """
-        [PLACEHOLDER] 
         Calculates spatial features on-the-fly for real-time live map requests.
-        Takes a single (lat, lon) target pair, and uses a pre-loaded reference spatial tree
-        to instantly compute the gaps and features without rebuilding the index.
+        :param target_coord: Tuple (latitude, longitude)
+        :param target_cat_array: 1D numpy array of one-hot encoded categories 
+        :param reference_df: A DataFrame of the city's existing restaurants
+        :return: 1-row DataFrame containing all spatial features
         """
-        pass
+        cat_cols = [c for c in reference_df.columns if c.startswith('cat_')]
+        
+        target_coords_rad = np.radians([target_coord])
+        target_cats = np.array([target_cat_array])
+        
+        ref_coords = np.radians(reference_df[['latitude', 'longitude']].values)
+        ref_cats = reference_df[cat_cols].values
+        ref_stars = reference_df['stars'].values
+        ref_surv = reference_df['is_open'].values
+        ref_revs = reference_df['review_count'].values
+        
+        # Build ultra-fast localized lookup trees
+        ref_tree = BallTree(ref_coords, metric='haversine')
+        self.category_knn = KNNRetrievalEngine()
+        self.category_knn.fit(ref_cats)
+        
+        features_df = self.compute_local_features(
+            target_coords_rad, 
+            target_cats, 
+            ref_tree, 
+            ref_cats, 
+            ref_stars, 
+            ref_surv, 
+            ref_revs, 
+            exclude_self=False
+        )
+        return features_df
