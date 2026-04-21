@@ -20,7 +20,7 @@ To ensure all file paths resolve correctly, you **must run the test from the roo
 3. Run the following command:
 
 ```bash
-python tests/test_inference.py
+PYTHONPATH=. python tests/test_inference.py
 ```
 
 ### Expected Output
