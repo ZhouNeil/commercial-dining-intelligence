@@ -237,22 +237,20 @@ if __name__ == "__main__":
     business_file = "/Users/jackbai/Documents/ML_project/yelp_dataset_csv/yelp_academic_dataset_business.csv"
     
     try:
-        # Create an instance
         processor = YelpDataProcessor(business_file)
         
-        # Example 1: Run specifically for Philly Restaurants (as per notebook)
-        processor.process(city="Philadelphia", category_keywords=["Restaurants", "Food"])
+        # We are no longer limiting to "Philadelphia". 
+        # By processing all cities globally, we let BallTree naturally isolate geographical 
+        # local competition while scaling the dataset massively for our ML algorithm.
+        print("Processing GLOBAL Dataset (All Cities)...")
+        processor.process(city=None, category_keywords=["Restaurants", "Food"])
         
         spatial_engineer = SpatialFeatureEngineer(processor.df)
         train_spatial, test_spatial = spatial_engineer.split_and_engineer_spatial_features()
+        
         train_spatial.to_csv("../../train_spatial.csv", index=False)
         test_spatial.to_csv("../../test_spatial.csv", index=False)
-        print(f"Data processed and split for Philadelphia successfully! Train: {train_spatial.shape}, Test: {test_spatial.shape}")
-        
-        # Example 2: How to query everything (uncomment to process the whole dataset)
-        # all_restaurants_df = processor.process(category_keywords=["Restaurants", "Food"])
-        # all_restaurants_df.to_csv("updated_all_data.csv", index=False)
-        # print(f"Data processed for the entire dataset successfully! Shape: {all_restaurants_df.shape}")
+        print(f"Global Data processed successfully! Train: {train_spatial.shape}, Test: {test_spatial.shape}")
         
     except FileNotFoundError:
         print(f"Dataset file '{business_file}' not found. Verify your path.")
