@@ -1,9 +1,21 @@
 import os
-import sys
 import joblib
 import pandas as pd
 import numpy as np
 from pipelines.spatial_feature_engineer import SpatialFeatureEngineer
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _default_spatial_csv():
+    for rel in ("data/train_spatial.csv", "train_spatial.csv"):
+        p = os.path.join(_REPO_ROOT, rel)
+        if os.path.isfile(p):
+            return p
+    raise FileNotFoundError(
+        "未找到 train_spatial 数据：请将 train_spatial.csv 放在仓库根目录或 data/ 下。"
+    )
+
 
 def run_simulation(city="Philadelphia"):
     print(f"--- MOCKING LIVE USER SELECTION ON FRONTEND ---")
@@ -11,7 +23,7 @@ def run_simulation(city="Philadelphia"):
     
     # In production, the backend would just load the raw output of YelpDataProcessor
     # Here, we can cheat and load the global train file, but only keep Philly rows
-    global_ref = pd.read_csv("../train_spatial.csv")
+    global_ref = pd.read_csv(_default_spatial_csv())
     
     # Try to filter by city if the column exists, otherwise just use a subset (e.g. first 2000 rows as 'local context')
     if 'city' in global_ref.columns:
