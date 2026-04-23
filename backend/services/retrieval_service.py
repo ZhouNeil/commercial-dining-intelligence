@@ -102,11 +102,14 @@ class RetrievalSearchService:
         self._index: Optional[RestaurantSearchIndex] = None
         self._photo_ids_by_business: Optional[dict[str, list[str]]] = None
 
+    _GALLERY_MAX = 8
+    _FALLBACK_GALLERY = 4
+
     def _business_photo_map(self) -> dict[str, list[str]]:
         if self._photo_ids_by_business is None:
             self._photo_ids_by_business = load_business_photo_ids(
                 resolve_photos_json(self.repo_root),
-                max_per_business=1,
+                max_per_business=self._GALLERY_MAX,
             )
         return self._photo_ids_by_business
 
@@ -115,20 +118,30 @@ class RetrievalSearchService:
             return df
         out = df.copy()
         pmap = self._business_photo_map()
-        urls: list[str] = []
+        primary: list[str] = []
+        galleries: list[list[str]] = []
         if "business_id" in out.columns:
             for bid in out["business_id"].astype(str):
                 ids = pmap.get(bid, [])
-                if ids:
+                g: list[str] = []
+                for pid in ids[: self._GALLERY_MAX]:
                     try:
-                        urls.append(yelp_bphoto_cdn_url(ids[0]))
+                        g.append(yelp_bphoto_cdn_url(pid))
                     except ValueError:
-                        urls.append(_fallback_photo_url(bid))
+                        continue
+                if not g:
+                    for j in range(self._FALLBACK_GALLERY):
+                        g.append(_fallback_photo_url(f"{bid}|{j}"))
                 else:
-                    urls.append(_fallback_photo_url(bid))
+                    g = g[: self._GALLERY_MAX]
+                galleries.append(g)
+                primary.append(g[0] if g else _fallback_photo_url(bid))
         else:
-            urls = [_fallback_photo_url("") for _ in range(len(out))]
-        out["photo_url"] = urls
+            for _ in range(len(out)):
+                galleries.append([_fallback_photo_url("") for j in range(self._FALLBACK_GALLERY)])
+            primary = [g[0] for g in galleries]
+        out["photo_url"] = primary
+        out["photo_urls"] = galleries
         return out
 
     def load_index(self, force_rebuild: bool = False) -> RestaurantSearchIndex:

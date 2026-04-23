@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import {
   getStates,
   postSearch,
@@ -31,7 +31,7 @@ const wPrice = ref(0.15);
 const wDistance = ref(0.2);
 const wPopularity = ref(0.1);
 const forceRebuild = ref(false);
-const step2Open = ref(false);
+const step2Open = ref(true);
 
 const loading = ref(false);
 const err = ref<string | null>(null);
@@ -40,6 +40,17 @@ const lastMode = ref<"discover" | "refine" | null>(null);
 
 const likedIds = ref<string[]>([]);
 const dislikedIds = ref<string[]>([]);
+
+/** 可拖动侧栏宽度 */
+const railW = ref(300);
+const railMin = 220;
+const railMax = 520;
+const railCollapsed = ref(false);
+const railDragging = ref(false);
+let dragStartX = 0;
+let dragStartW = 0;
+
+const selectedDetail = ref<Record<string, unknown> | null>(null);
 
 const resolvedQueryText = computed(() => {
   const m = data.value?.meta as Record<string, unknown> | undefined;
@@ -57,10 +68,38 @@ const metaPool = computed(() => {
   const pr = m.pool_rows;
   const pk = m.pool_k;
   const rr = m.reranked;
-  return `候选池 ${pr} 行（内部 Top-${pk}）${rr ? " · 已按 👍/👎 v2 重排" : ""}`;
+  return `候选池 ${pr} 行（内部 Top-${pk}）${rr ? " · 已 v2 重排" : ""}`;
 });
 
+function startRailDrag(e: MouseEvent) {
+  e.preventDefault();
+  railDragging.value = true;
+  dragStartX = e.clientX;
+  dragStartW = railW.value;
+  document.body.style.userSelect = "none";
+  document.addEventListener("mousemove", onRailDrag);
+  document.addEventListener("mouseup", endRailDrag);
+}
+
+function onRailDrag(e: MouseEvent) {
+  if (!railDragging.value) return;
+  const dx = e.clientX - dragStartX;
+  railW.value = Math.min(railMax, Math.max(railMin, dragStartW + dx));
+}
+
+function endRailDrag() {
+  railDragging.value = false;
+  document.body.style.userSelect = "";
+  document.removeEventListener("mousemove", onRailDrag);
+  document.removeEventListener("mouseup", endRailDrag);
+}
+
+function onGlobalKey(e: KeyboardEvent) {
+  if (e.key === "Escape") closeDetail();
+}
+
 onMounted(async () => {
+  window.addEventListener("keydown", onGlobalKey);
   try {
     const r = await getStates();
     states.value = r.states.length ? r.states : ["PA"];
@@ -70,6 +109,11 @@ onMounted(async () => {
   } catch {
     states.value = ["PA", "NJ", "NV"];
   }
+});
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", onGlobalKey);
+  endRailDrag();
 });
 
 function buildBody(discoverOnly: boolean): SearchRequest {
@@ -129,13 +173,12 @@ function str(r: Record<string, unknown>, k: string): string {
   return String(v);
 }
 
-/** 与 backend/services/retrieval_service 占位列表一致（CDN 失败时二次回退） */
 const FALLBACK_PHOTOS = [
-  "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=320&h=200&fit=crop&q=80",
-  "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=320&h=200&fit=crop&q=80",
-  "https://images.unsplash.com/photo-1414235077428-338989a841e3?w=320&h=200&fit=crop&q=80",
-  "https://images.unsplash.com/photo-1466978913421-dad2ebd01d17?w=320&h=200&fit=crop&q=80",
-  "https://images.unsplash.com/photo-1552566626-52f8b828add9?w=320&h=200&fit=crop&q=80",
+  "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=640&h=400&fit=crop&q=80",
+  "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=640&h=400&fit=crop&q=80",
+  "https://images.unsplash.com/photo-1414235077428-338989a841e3?w=640&h=400&fit=crop&q=80",
+  "https://images.unsplash.com/photo-1466978913421-dad2ebd01d17?w=640&h=400&fit=crop&q=80",
+  "https://images.unsplash.com/photo-1552566626-52f8b828add9?w=640&h=400&fit=crop&q=80",
 ] as const;
 
 function fallbackPhotoUrl(businessId: string): string {
@@ -148,15 +191,26 @@ function fallbackPhotoUrl(businessId: string): string {
   return FALLBACK_PHOTOS[idx] ?? FALLBACK_PHOTOS[0];
 }
 
-function thumbSrc(row: Record<string, unknown>): string {
+/** 列表缩略 + 弹层画廊 */
+function photoUrls(row: Record<string, unknown>): string[] {
+  const raw = row["photo_urls"];
+  if (Array.isArray(raw) && raw.length) {
+    return raw.map((x) => String(x)).filter(Boolean);
+  }
   const u = str(row, "photo_url").trim();
-  return u || fallbackPhotoUrl(str(row, "business_id"));
+  if (u) return [u];
+  return [fallbackPhotoUrl(str(row, "business_id"))];
+}
+
+function thumbSrc(row: Record<string, unknown>): string {
+  const urls = photoUrls(row);
+  return urls[0] || fallbackPhotoUrl(str(row, "business_id"));
 }
 
 const GRAY_NO_PHOTO =
   "data:image/svg+xml," +
   encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200"><rect width="100%" height="100%" fill="#e2e8f0"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#64748b" font-size="13">No photo</text></svg>'
+    '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200"><rect width="100%" height="100%" fill="#1e293b"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#94a3b8" font-size="13">No photo</text></svg>'
   );
 
 function onThumbErr(ev: Event, row: Record<string, unknown>) {
@@ -170,6 +224,19 @@ function onThumbErr(ev: Event, row: Record<string, unknown>) {
   el.src = fallbackPhotoUrl(`${bid}\0retry`);
 }
 
+function onGalleryImgErr(ev: Event) {
+  const el = ev.target as HTMLImageElement;
+  el.style.display = "none";
+}
+
+function openDetail(row: Record<string, unknown>) {
+  selectedDetail.value = row;
+}
+
+function closeDetail() {
+  selectedDetail.value = null;
+}
+
 function num(r: Record<string, unknown>, k: string): number | null {
   const v = r[k];
   if (v == null || v === "") return null;
@@ -178,9 +245,9 @@ function num(r: Record<string, unknown>, k: string): number | null {
 }
 
 function fmtPriceTier(tier: unknown): string {
-  if (tier == null || tier === "") return "N/A";
+  if (tier == null || tier === "") return "—";
   const t = Math.round(Number(tier));
-  if (!Number.isFinite(t)) return "N/A";
+  if (!Number.isFinite(t)) return "—";
   const x = Math.max(1, Math.min(4, t));
   return "$".repeat(x);
 }
@@ -233,7 +300,7 @@ function toggleDislike(bid: string) {
 function feedbackLabel(bid: string): string {
   if (likedIds.value.includes(bid)) return "已标记 👍";
   if (dislikedIds.value.includes(bid)) return "已标记 👎";
-  return "无反馈";
+  return "";
 }
 
 async function rerunFeedback() {
@@ -249,144 +316,196 @@ function resetFeedback() {
 </script>
 
 <template>
-  <div class="layout">
-    <aside class="sidebar">
-      <h2 class="side-title">Search Settings</h2>
-      <p class="hint">
-        侧栏权重与 d1doc 描述一致；更大 Pool 便于在 👍/👎 后不重搜即可重排。
-      </p>
+  <div class="app">
+    <button
+      v-if="railCollapsed"
+      type="button"
+      class="fab-open"
+      @click="railCollapsed = false"
+    >
+      <span class="fab-icon">☰</span>
+      筛选与权重
+    </button>
 
-      <label class="chk"
-        ><input v-model="forceRebuild" type="checkbox" /> Force Rebuild Index</label
-      >
-
-      <h3 class="sub">Ranking weights</h3>
-      <label class="sl">w_semantic（文本相似）</label>
-      <input v-model.number="wSemantic" type="range" min="0" max="2" step="0.05" />
-      <span class="val">{{ wSemantic.toFixed(2) }}</span>
-
-      <label class="sl">w_rating（星级 × review 信任）</label>
-      <input v-model.number="wRating" type="range" min="0" max="2" step="0.05" />
-      <span class="val">{{ wRating.toFixed(2) }}</span>
-
-      <label class="sl">w_price</label>
-      <input v-model.number="wPrice" type="range" min="0" max="2" step="0.05" />
-      <span class="val">{{ wPrice.toFixed(2) }}</span>
-
-      <label class="sl">w_distance</label>
-      <input v-model.number="wDistance" type="range" min="0" max="2" step="0.05" />
-      <span class="val">{{ wDistance.toFixed(2) }}</span>
-
-      <label class="sl">w_popularity（log reviews）</label>
-      <input v-model.number="wPopularity" type="range" min="0" max="2" step="0.05" />
-      <span class="val">{{ wPopularity.toFixed(2) }}</span>
-
-      <h3 class="sub">Interactive v2 — candidate pool</h3>
-      <label class="sl">Internal pool size（15–120）</label>
-      <input v-model.number="poolK" type="range" min="15" max="120" step="5" />
-      <span class="val">{{ poolK }}</span>
-    </aside>
-
-    <section class="main">
-      <nav class="back"><router-link to="/">← 首页</router-link></nav>
-
-      <h1>Yelp Commercial &amp; Dining Intelligence</h1>
-      <p class="caption">
-        排名融合侧栏权重（星级、文本相似、价格、距离、热度）。先
-        <strong>Step 1</strong> 选州/市并「泛检索」，再在 <strong>Step 2</strong> 用自然语言与菜系精化。
-      </p>
-
-      <div class="card block">
-        <h2>Search &amp; filters</h2>
-        <p class="hint">
-          <strong>Step 1</strong>：必选州，市可选（精确匹配）。首次只按「普通餐厅」排序。<br />
-          <strong>Step 2</strong>：菜系、预算、关键词或自然语言 → 点击「Update with preferences」。
-        </p>
-
-        <h3>Step 1 — Where are you dining?</h3>
-        <div class="row3">
-          <div>
-            <label>State（必选）</label>
-            <select v-model="browseState">
-              <option v-for="s in states" :key="s" :value="s">{{ s }}</option>
-            </select>
-          </div>
-          <div>
-            <label>City（可选）</label>
-            <input v-model="browseCity" type="text" placeholder="精确城市名" />
-          </div>
-          <div class="btn-cell">
-            <button
-              type="button"
-              class="primary"
-              :disabled="loading || !browseState"
-              @click="runDiscover"
-            >
-              Find general restaurants here
-            </button>
-          </div>
+    <aside
+      v-show="!railCollapsed"
+      class="rail"
+      :class="{ 'rail--drag': railDragging }"
+      :style="{ width: railW + 'px' }"
+    >
+      <header class="rail-head">
+        <div>
+          <p class="rail-eyebrow">检索参数</p>
+          <h2 class="rail-title">地点 · 偏好 · 排序</h2>
         </div>
-
-        <h3>Step 2 — Refine</h3>
-        <details :open="step2Open">
-          <summary>Preferences &amp; natural language</summary>
-          <label class="mt">Natural language</label>
-          <textarea
-            v-model="nlQuery"
-            rows="3"
-            placeholder="cheap sushi, near NYU, within 3 km"
-          />
-
-          <label class="mt">Cuisines</label>
-          <div class="cuisine-grid">
-            <label v-for="c in CUISINES" :key="c" class="cuisine"
-              ><input
-                type="checkbox"
-                :checked="selectedCuisines.includes(c)"
-                @change="toggleCuisine(c)"
-              />
-              {{ c }}</label
-            >
-          </div>
-
-          <label class="mt">Extra keywords（可选）</label>
-          <input v-model="keywords" type="text" />
-
-          <label class="mt">Top-K（展示条数）</label>
-          <input v-model.number="topK" type="number" min="3" max="30" class="narrow" />
-        </details>
-
         <button
           type="button"
-          class="secondary"
-          :disabled="loading || !browseState"
-          @click="runRefine"
+          class="rail-collapse"
+          title="收起侧栏"
+          @click="railCollapsed = true"
         >
-          Update with preferences
+          ⟨
         </button>
+      </header>
+
+      <div class="rail-scroll">
+        <section class="panel">
+          <h3 class="h3">Step 1 — 位置</h3>
+          <label class="lbl">州</label>
+          <select v-model="browseState" class="inp">
+            <option v-for="s in states" :key="s" :value="s">{{ s }}</option>
+          </select>
+          <label class="lbl">城市（可选，精确匹配）</label>
+          <input v-model="browseCity" class="inp" type="text" placeholder="例如 Philadelphia" />
+
+          <button
+            type="button"
+            class="btn btn-primary"
+            :disabled="loading || !browseState"
+            @click="runDiscover"
+          >
+            发现附近餐厅
+          </button>
+        </section>
+
+        <section class="panel">
+          <h3 class="h3">Step 2 — 偏好与 NL</h3>
+          <details :open="step2Open" class="details">
+            <summary>自然语言、菜系、关键词</summary>
+            <label class="lbl">描述需求</label>
+            <textarea
+              v-model="nlQuery"
+              class="inp area"
+              rows="3"
+              placeholder="例：便宜寿司、近 NYU、3 km 内"
+            />
+            <span class="lbl">菜系</span>
+            <div class="cuisine-grid">
+              <label v-for="c in CUISINES" :key="c" class="cuisine"
+                ><input
+                  type="checkbox"
+                  :checked="selectedCuisines.includes(c)"
+                  @change="toggleCuisine(c)"
+                />
+                {{ c }}</label
+              >
+            </div>
+            <label class="lbl">额外关键词</label>
+            <input v-model="keywords" class="inp" type="text" />
+            <label class="lbl">结果条数 Top-K</label>
+            <input v-model.number="topK" class="inp narrow" type="number" min="3" max="30" />
+          </details>
+          <button
+            type="button"
+            class="btn btn-secondary"
+            :disabled="loading || !browseState"
+            @click="runRefine"
+          >
+            按偏好更新
+          </button>
+        </section>
+
+        <section class="panel panel-accent">
+          <h3 class="h3">排序权重</h3>
+          <p class="hint">与后端多因子 <code>final_score</code> 对应；可拖动右缘调整侧栏宽度。</p>
+          <label class="chk"
+            ><input v-model="forceRebuild" type="checkbox" /> 强制重建 TF-IDF 索引</label
+          >
+
+          <div class="rng">
+            <div class="rng-h">
+              <span>w_semantic 文本</span>
+              <span class="rng-v">{{ wSemantic.toFixed(2) }}</span>
+            </div>
+            <input v-model.number="wSemantic" type="range" min="0" max="2" step="0.05" />
+          </div>
+          <div class="rng">
+            <div class="rng-h">
+              <span>w_rating 星级</span>
+              <span class="rng-v">{{ wRating.toFixed(2) }}</span>
+            </div>
+            <input v-model.number="wRating" type="range" min="0" max="2" step="0.05" />
+          </div>
+          <div class="rng">
+            <div class="rng-h">
+              <span>w_price 价格</span>
+              <span class="rng-v">{{ wPrice.toFixed(2) }}</span>
+            </div>
+            <input v-model.number="wPrice" type="range" min="0" max="2" step="0.05" />
+          </div>
+          <div class="rng">
+            <div class="rng-h">
+              <span>w_distance 距离</span>
+              <span class="rng-v">{{ wDistance.toFixed(2) }}</span>
+            </div>
+            <input v-model.number="wDistance" type="range" min="0" max="2" step="0.05" />
+          </div>
+          <div class="rng">
+            <div class="rng-h">
+              <span>w_popularity 热度</span>
+              <span class="rng-v">{{ wPopularity.toFixed(2) }}</span>
+            </div>
+            <input v-model.number="wPopularity" type="range" min="0" max="2" step="0.05" />
+          </div>
+
+          <h3 class="h3 mt1">v2 候选池</h3>
+          <div class="rng">
+            <div class="rng-h">
+              <span>池大小（重排用）</span>
+              <span class="rng-v">{{ poolK }}</span>
+            </div>
+            <input v-model.number="poolK" type="range" min="15" max="120" step="5" />
+          </div>
+        </section>
       </div>
+    </aside>
 
-      <p v-if="err" class="err">{{ err }}</p>
+    <div
+      v-show="!railCollapsed"
+      class="gutter"
+      title="拖动调整侧栏宽度"
+      @mousedown="startRailDrag"
+    />
 
-      <div v-if="data && data.results.length" class="card block">
-        <h2>Recommendations</h2>
-        <p class="hint">{{ metaPool }}</p>
-        <details class="mb">
-          <summary>Parsed constraints（rule-based）</summary>
-          <pre v-if="metaParsed" class="json">{{ JSON.stringify(metaParsed, null, 2) }}</pre>
-          <p v-if="resolvedQueryText" class="hint">query_text: <code>{{ resolvedQueryText }}</code></p>
-        </details>
-        <button type="button" class="ghost" @click="resetFeedback">Reset v2 feedback (likes / dislikes)</button>
+    <main class="main">
+      <nav class="back">
+        <router-link to="/" class="back-a">← 返回首页</router-link>
+      </nav>
 
-        <div
-          v-for="(row, i) in data.results"
-          :key="str(row as Record<string, unknown>, 'business_id') + String(i)"
-          class="result-card"
-        >
-          <div class="result-inner">
-            <div class="thumb-wrap">
+      <header class="hero">
+        <h1 class="hero-title">Dining Intelligence</h1>
+        <p class="hero-sub">
+          先选州/市做广泛发现，再用自然语言与菜系精化。侧栏可收起，点击卡片查看相册与详情。
+        </p>
+        <p v-if="loading" class="status-pill">检索中…</p>
+      </header>
+
+      <p v-if="err" class="err-banner">{{ err }}</p>
+
+      <div v-if="data && data.results.length" class="results-wrap">
+        <div class="results-head">
+          <h2>推荐结果</h2>
+          <p class="sub">{{ metaPool }}</p>
+          <details v-if="metaParsed" class="json-details">
+            <summary>规则解析</summary>
+            <pre class="json-pre">{{ JSON.stringify(metaParsed, null, 2) }}</pre>
+            <p v-if="resolvedQueryText" class="qt">query_text: <code>{{ resolvedQueryText }}</code></p>
+          </details>
+          <button type="button" class="btn-ghost" @click="resetFeedback">重置 👍/👎</button>
+        </div>
+
+        <ul class="card-list">
+          <li
+            v-for="(row, i) in data.results"
+            :key="str(row as Record<string, unknown>, 'business_id') + String(i)"
+            class="r-card"
+            role="button"
+            tabindex="0"
+            @click="openDetail(row as Record<string, unknown>)"
+            @keydown.enter="openDetail(row as Record<string, unknown>)"
+          >
+            <div class="r-thumb">
               <img
-                class="thumb"
                 :src="thumbSrc(row as Record<string, unknown>)"
                 :alt="str(row as Record<string, unknown>, 'name')"
                 loading="lazy"
@@ -394,323 +513,744 @@ function resetFeedback() {
                 @error="onThumbErr($event, row as Record<string, unknown>)"
               />
             </div>
-            <div class="result-body">
-              <div class="title-row">
-                <div>
-                  <strong>#{{ i + 1 }}. {{ str(row as Record<string, unknown>, "name") }}</strong>
-                  <p class="subline">
-                    {{ str(row as Record<string, unknown>, "address") }},
-                    {{ str(row as Record<string, unknown>, "city") }},
-                    {{ str(row as Record<string, unknown>, "state") }}
-                    · {{ num(row as Record<string, unknown>, "stars")?.toFixed(1) ?? "—" }}★ ({{
-                      str(row as Record<string, unknown>, "review_count")
-                    }}
-                    reviews) · {{ fmtPriceTier((row as Record<string, unknown>).price_tier) }} ·
-                    {{ distLabel(row as Record<string, unknown>) }} ·
-                    {{ scoreLine(row as Record<string, unknown>) }}
-                  </p>
-                </div>
+            <div class="r-body">
+              <div class="r-top">
+                <span class="r-rank">#{{ i + 1 }}</span>
+                <h3 class="r-name">{{ str(row as Record<string, unknown>, "name") }}</h3>
+                <p class="r-meta">
+                  {{ str(row as Record<string, unknown>, "city") }},
+                  {{ str(row as Record<string, unknown>, "state") }}
+                  · {{ num(row as Record<string, unknown>, "stars")?.toFixed(1) ?? "—" }}★
+                  · {{ str(row as Record<string, unknown>, "review_count") }} 条评论
+                </p>
+                <p class="r-dim">
+                  {{ fmtPriceTier((row as Record<string, unknown>).price_tier) }} ·
+                  {{ distLabel(row as Record<string, unknown>) }} ·
+                  {{ scoreLine(row as Record<string, unknown>) }}
+                </p>
               </div>
-              <div v-if="str(row as Record<string, unknown>, 'business_id')" class="fb-row">
+              <div
+                v-if="str(row as Record<string, unknown>, 'business_id')"
+                class="r-actions"
+                @click.stop
+              >
                 <button
                   type="button"
                   class="fb"
                   @click="toggleLike(str(row as Record<string, unknown>, 'business_id'))"
                 >
-                  👍 Like
+                  👍
                 </button>
                 <button
                   type="button"
                   class="fb"
                   @click="toggleDislike(str(row as Record<string, unknown>, 'business_id'))"
                 >
-                  👎 Dislike
+                  👎
                 </button>
-                <span class="fb-cap">{{
+                <span v-if="feedbackLabel(str(row as Record<string, unknown>, 'business_id'))" class="fb-t">{{
                   feedbackLabel(str(row as Record<string, unknown>, "business_id"))
                 }}</span>
+                <span class="tap-hint">点卡片其他区域看相册</span>
               </div>
-              <div class="bar">
-                <div class="fill" :style="{ width: starBar(row as Record<string, unknown>) * 100 + '%' }" />
+              <div class="bar" @click.stop>
+                <div
+                  class="bar-fill"
+                  :style="{ width: starBar(row as Record<string, unknown>) * 100 + '%' }"
+                />
               </div>
             </div>
+          </li>
+        </ul>
+      </div>
+
+      <p v-else-if="data" class="empty">暂无结果，请尝试更换州/市或放宽条件。</p>
+
+      <p class="foot">TF-IDF 余弦 + 多因子重排，与 <code>recommend_keywords</code> 一致</p>
+    </main>
+
+    <Teleport to="body">
+      <div
+        v-if="selectedDetail"
+        class="modal-root"
+        role="presentation"
+        @keydown.escape.prevent="closeDetail"
+      >
+        <div class="modal-back" @click="closeDetail" />
+        <div class="modal-box" role="dialog" aria-modal="true" aria-label="餐厅详情" @click.stop>
+          <button type="button" class="modal-x" aria-label="关闭" @click="closeDetail">×</button>
+          <h2 class="modal-title">{{ str(selectedDetail, "name") }}</h2>
+          <p class="modal-sub">
+            {{ str(selectedDetail, "address") }} · {{ str(selectedDetail, "city") }},
+            {{ str(selectedDetail, "state") }}
+          </p>
+          <p class="modal-sub2">
+            {{ str(selectedDetail, "categories") }}
+          </p>
+          <div class="gallery">
+            <figure v-for="(u, gi) in photoUrls(selectedDetail)" :key="gi" class="g-fig">
+              <img
+                :src="u"
+                :alt="`图 ${gi + 1}`"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+                @error="onGalleryImgErr"
+              />
+            </figure>
+          </div>
+          <p class="modal-score">
+            <strong>{{ num(selectedDetail, "stars")?.toFixed(1) ?? "—" }}</strong> 星 ·
+            {{ str(selectedDetail, "review_count") }} 条评论 ·
+            {{ fmtPriceTier(selectedDetail["price_tier"]) }} · {{ distLabel(selectedDetail) }}
+          </p>
+          <div v-if="str(selectedDetail, 'business_id')" class="modal-actions">
+            <button
+              type="button"
+              class="btn btn-primary"
+              @click="toggleLike(str(selectedDetail, 'business_id'))"
+            >
+              👍 Like
+            </button>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              @click="toggleDislike(str(selectedDetail, 'business_id'))"
+            >
+              👎 Dislike
+            </button>
+            <code class="bid">ID: {{ str(selectedDetail, "business_id") }}</code>
           </div>
         </div>
       </div>
-
-      <p v-else-if="data" class="muted">无结果（请检查州/市数据覆盖或放宽条件）。</p>
-
-      <p class="foot">
-        How it works: TF-IDF cosine on aggregated review text, then multi-factor score（侧栏权重）over
-        similarity, stars, price vs budget, distance, log reviews — 与后端 recommend_keywords 一致。
-      </p>
-    </section>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
-.layout {
-  display: grid;
-  grid-template-columns: minmax(260px, 300px) 1fr;
-  gap: 1.25rem;
-  align-items: start;
-  max-width: 1200px;
-  margin: 0 auto;
+.app {
+  --bg: #0b1220;
+  --panel: #111827;
+  --panel-2: #0f172a;
+  --border: rgba(148, 163, 184, 0.18);
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #818cf8;
+  --accent-2: #6366f1;
+  min-height: 100vh;
+  display: flex;
+  background: linear-gradient(160deg, #0b1220 0%, #0f172a 45%, #111827 100%);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  font-size: 15px;
 }
-@media (max-width: 840px) {
-  .layout {
-    grid-template-columns: 1fr;
-  }
-}
-.sidebar {
-  position: sticky;
-  top: 0.5rem;
-  padding: 1rem;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  font-size: 0.88rem;
-}
-.side-title {
-  margin: 0 0 0.5rem;
-  font-size: 1rem;
-}
-.sub {
-  margin: 1rem 0 0.35rem;
-  font-size: 0.85rem;
-}
-.sl {
-  display: block;
-  margin-top: 0.5rem;
-  font-weight: 600;
-  font-size: 0.78rem;
-}
-.val {
-  display: inline-block;
-  margin-left: 0.35rem;
-  color: #475569;
-  font-size: 0.8rem;
-}
-.hint {
-  color: #64748b;
-  font-size: 0.82rem;
-  line-height: 1.45;
-}
-.chk {
+
+.fab-open {
+  position: fixed;
+  z-index: 5;
+  left: 0.75rem;
+  top: 0.75rem;
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  margin-top: 0.75rem;
+  gap: 0.5rem;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 999px;
+  font-size: 0.9rem;
   cursor: pointer;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
 }
-.main {
-  min-width: 0;
+.fab-icon {
+  font-size: 1.1rem;
+  opacity: 0.9;
 }
-.back {
-  margin-bottom: 0.5rem;
-}
-.back a {
-  color: #2563eb;
-}
-.caption {
-  color: #475569;
-  font-size: 0.92rem;
-  max-width: 52rem;
-}
-.card.block {
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 1rem 1.1rem;
-  margin-top: 1rem;
-  background: #fff;
-}
-.card h2 {
-  margin-top: 0;
-}
-.row3 {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 0.75rem;
-  margin: 0.75rem 0 1rem;
-}
-@media (max-width: 720px) {
-  .row3 {
-    grid-template-columns: 1fr;
-  }
-}
-.row3 label {
-  display: block;
-  font-size: 0.8rem;
-  font-weight: 600;
-  margin-bottom: 0.2rem;
-}
-.row3 select,
-.row3 input[type="text"] {
-  width: 100%;
-  padding: 0.35rem 0.5rem;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
-}
-.btn-cell {
+
+.rail {
+  flex: 0 0 auto;
+  min-width: 220px;
+  max-width: 520px;
+  width: 300px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  z-index: 2;
+  box-shadow: 8px 0 40px rgba(0, 0, 0, 0.2);
 }
-button.primary {
-  background: #2563eb;
-  color: #fff;
-  border: none;
-  padding: 0.5rem 0.75rem;
-  border-radius: 6px;
+.rail--drag {
+  user-select: none;
+}
+.rail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1.1rem 1rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.rail-eyebrow {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  margin: 0 0 0.2rem;
+}
+.rail-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+.rail-collapse {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  border-radius: 8px;
   cursor: pointer;
-  font-weight: 600;
+  font-size: 1.1rem;
+  line-height: 1;
 }
-button.primary:disabled,
-button.secondary:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+.rail-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.75rem 0.9rem 1.5rem;
+  scrollbar-gutter: stable;
 }
-button.secondary {
-  margin-top: 0.75rem;
-  background: #e2e8f0;
-  border: none;
-  padding: 0.45rem 0.85rem;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 600;
+
+.gutter {
+  width: 6px;
+  flex: 0 0 6px;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.15), transparent);
+  cursor: col-resize;
+  z-index: 3;
 }
-button.ghost {
-  margin-bottom: 1rem;
-  background: transparent;
-  border: 1px dashed #94a3b8;
-  padding: 0.35rem 0.65rem;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 0.85rem;
+.gutter:hover {
+  background: rgba(129, 140, 248, 0.3);
 }
-.mt {
-  display: block;
-  margin-top: 0.65rem;
-  font-weight: 600;
+
+.panel {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.9rem 0.85rem 1rem;
+  margin-bottom: 0.85rem;
+}
+.panel-accent {
+  background: linear-gradient(145deg, #1a2040 0%, #111827 100%);
+  border-color: rgba(99, 102, 241, 0.25);
+}
+.h3 {
   font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  margin: 0 0 0.6rem;
 }
-textarea,
-input.narrow {
+.lbl {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 0.5rem 0 0.25rem;
+}
+.inp {
   width: 100%;
-  max-width: 24rem;
-  padding: 0.4rem 0.5rem;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
+  padding: 0.45rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #0b0f1a;
+  color: var(--text);
+  font: inherit;
+  box-sizing: border-box;
+}
+.inp:focus {
+  outline: 1px solid var(--accent-2);
+}
+.area {
+  min-height: 3.2rem;
+  resize: vertical;
+}
+.narrow {
+  max-width: 8rem;
 }
 .cuisine-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem 1rem;
-  margin: 0.35rem 0;
+  gap: 0.35rem 0.5rem;
+  margin: 0.35rem 0 0.5rem;
+  font-size: 0.82rem;
 }
 .cuisine {
   display: flex;
   align-items: center;
   gap: 0.25rem;
-  font-size: 0.85rem;
+  cursor: pointer;
+  color: #cbd5e1;
+}
+.details {
+  margin-bottom: 0.65rem;
+}
+.details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.86rem;
+  margin-bottom: 0.4rem;
+}
+
+.btn {
+  width: 100%;
+  margin-top: 0.65rem;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  border-radius: 9px;
+  font-weight: 600;
+  cursor: pointer;
+  font: inherit;
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent-2) 0%, #4f46e5 100%);
+  color: #fff;
+  margin-top: 0.4rem;
+}
+.btn-secondary {
+  background: #334155;
+  color: #f1f5f9;
+}
+.hint {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  margin: 0 0 0.5rem;
+}
+.hint code {
+  font-size: 0.72rem;
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.1);
+  padding: 0.05em 0.2em;
+  border-radius: 3px;
+}
+.chk {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.4rem 0 0.75rem;
+  color: #cbd5e1;
+  font-size: 0.82rem;
   cursor: pointer;
 }
-.err {
-  color: #b91c1c;
-  margin-top: 0.75rem;
+.rng {
+  margin-bottom: 0.4rem;
 }
-.muted {
-  color: #64748b;
+.rng input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent-2);
+  margin-top: 0.1rem;
 }
-.json {
-  background: #f1f5f9;
-  padding: 0.75rem;
-  font-size: 0.75rem;
-  overflow: auto;
-  max-height: 14rem;
+.rng-h {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: var(--muted);
 }
-.mb {
-  margin-bottom: 0.75rem;
+.rng-v {
+  color: #a5b4fc;
+  font-weight: 600;
 }
-.result-card {
-  border: 1px solid #e2e8f0;
+.mt1 {
+  margin-top: 0.6rem;
+}
+
+.main {
+  flex: 1 1 0;
+  min-width: 0;
+  align-self: stretch;
+  width: 100%;
+  max-width: none;
+  padding: 1.25rem 1.4rem 2.5rem;
+  box-sizing: border-box;
+}
+.back {
+  margin-bottom: 0.25rem;
+}
+.back-a {
+  color: #a5b4fc;
+  text-decoration: none;
+  font-size: 0.88rem;
+}
+.back-a:hover {
+  text-decoration: underline;
+}
+.hero {
+  margin-bottom: 1.25rem;
+}
+.hero-title {
+  margin: 0.25rem 0 0.35rem;
+  font-size: 1.65rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  background: linear-gradient(100deg, #e2e8f0, #a5b4fc);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero-sub {
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.55;
+  margin: 0 0 0.5rem;
+  max-width: 36rem;
+}
+.status-pill {
+  display: inline-block;
+  margin: 0;
+  padding: 0.2rem 0.55rem;
+  background: rgba(99, 102, 241, 0.15);
+  color: #a5b4fc;
+  border-radius: 999px;
+  font-size: 0.78rem;
+}
+
+.err-banner {
+  background: rgba(127, 29, 29, 0.3);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  color: #fecaca;
+  padding: 0.65rem 0.85rem;
+  border-radius: 10px;
+  margin: 0.5rem 0 1rem;
+  font-size: 0.88rem;
+}
+
+.results-head {
+  margin-bottom: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 0.9rem;
+}
+.results-head h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.sub {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+.json-details {
+  flex-basis: 100%;
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.json-pre {
+  background: #0b0f1a;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  margin-top: 0.75rem;
-  padding: 0.75rem;
-  background: #fafafa;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.7rem;
+  max-height: 8rem;
+  overflow: auto;
+  margin: 0.3rem 0 0.25rem;
 }
-.result-inner {
-  display: grid;
-  grid-template-columns: 120px 1fr;
-  gap: 0.75rem;
+.qt {
+  font-size: 0.8rem;
+  color: #cbd5e1;
 }
-@media (max-width: 560px) {
-  .result-inner {
-    grid-template-columns: 1fr;
+.btn-ghost {
+  margin-left: auto;
+  background: transparent;
+  border: 1px dashed rgba(148, 163, 184, 0.35);
+  color: var(--muted);
+  font-size: 0.8rem;
+  border-radius: 6px;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+}
+.btn-ghost:hover {
+  border-color: var(--accent);
+  color: #e2e8f0;
+}
+
+.card-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+@media (min-width: 900px) {
+  .card-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+    gap: 0.9rem;
+    align-content: start;
   }
 }
-.thumb-wrap {
-  border-radius: 6px;
-  min-height: 88px;
-  aspect-ratio: 16 / 10;
-  max-height: 120px;
-  background: #e2e8f0;
+
+.r-card {
+  display: flex;
+  gap: 0;
+  background: #111827;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  transition: box-shadow 0.2s, border-color 0.2s, transform 0.2s;
+  cursor: pointer;
+  outline: none;
+}
+.r-card:hover {
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+  border-color: rgba(99, 102, 241, 0.35);
+  transform: translateY(-1px);
+}
+.r-card:focus-visible {
+  box-shadow: 0 0 0 2px #6366f1;
+}
+.r-thumb {
+  flex: 0 0 132px;
+  min-height: 100px;
+  max-height: 150px;
+  background: #0b0f1a;
   overflow: hidden;
 }
-.thumb {
+.r-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
-.ph {
-  background: #e2e8f0;
+.r-body {
+  flex: 1;
+  min-width: 0;
+  padding: 0.7rem 0.95rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+}
+.r-top {
+  flex: 1;
+}
+.r-rank {
+  font-size: 0.72rem;
+  color: var(--accent);
+  font-weight: 700;
+  margin-right: 0.3rem;
+}
+.r-name {
+  display: inline;
+  font-size: 1.02rem;
+  font-weight: 700;
+  margin: 0;
+  color: #f8fafc;
+}
+.r-meta {
+  font-size: 0.8rem;
+  color: #cbd5e1;
+  margin: 0.2rem 0 0.15rem;
+}
+.r-dim {
+  font-size: 0.76rem;
+  color: var(--muted);
+  margin: 0 0 0.35rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.r-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+  margin-top: 0.15rem;
+}
+.fb {
+  padding: 0.2rem 0.45rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  background: #0b0f1a;
+  color: #e2e8f0;
   border-radius: 6px;
-  min-height: 88px;
+  cursor: pointer;
+  line-height: 1.2;
+}
+.fb:hover {
+  background: #1e293b;
+}
+.fb-t {
+  font-size: 0.72rem;
+  color: #a5b4fc;
+}
+.tap-hint {
+  font-size: 0.7rem;
+  color: #64748b;
+  margin-left: 0.15rem;
+}
+@media (max-width: 600px) {
+  .r-card {
+    flex-direction: column;
+  }
+  .r-thumb {
+    flex: none;
+    max-height: 200px;
+    min-height: 150px;
+  }
+}
+
+.bar {
+  height: 4px;
+  background: #1e293b;
+  border-radius: 4px;
+  margin-top: 0.45rem;
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #f59e0b, #fbbf24);
+  border-radius: 4px;
+  transition: width 0.25s ease;
+}
+
+.empty {
+  color: var(--muted);
+  text-align: center;
+  padding: 2.5rem 0.5rem;
+}
+.foot {
+  margin-top: 1.5rem;
+  color: #64748b;
+  font-size: 0.78rem;
+  max-width: 36rem;
+}
+.foot code {
+  font-size: 0.72rem;
+  color: #a5b4fc;
+}
+
+/* modal */
+.modal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.75rem;
-  color: #64748b;
+  padding: 1.25rem;
+  box-sizing: border-box;
 }
-.subline {
-  margin: 0.25rem 0 0;
-  font-size: 0.8rem;
-  color: #475569;
+.modal-back {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.8);
+  backdrop-filter: blur(4px);
 }
-.fb-row {
+.modal-box {
+  position: relative;
+  z-index: 1;
+  max-width: min(700px, 100%);
+  max-height: min(88vh, 100%);
+  overflow: auto;
+  width: 100%;
+  background: #111827;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.35rem 1.25rem 1.1rem;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.5);
+  animation: in 0.2s ease;
+}
+@keyframes in {
+  from {
+    transform: scale(0.98);
+    opacity: 0.8;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.modal-x {
+  position: absolute;
+  right: 0.65rem;
+  top: 0.55rem;
+  width: 2.1rem;
+  height: 2.1rem;
+  border: none;
+  background: #1e293b;
+  color: #94a3b8;
+  border-radius: 8px;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.modal-x:hover {
+  background: #334155;
+  color: #e2e8f0;
+}
+.modal-title {
+  margin: 0 2.25rem 0.35rem 0;
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.2;
+  color: #f8fafc;
+}
+.modal-sub,
+.modal-sub2 {
+  color: #94a3b8;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  margin: 0 0 0.3rem;
+}
+.modal-sub2 {
+  font-size: 0.82rem;
+  margin-bottom: 0.85rem;
+  word-break: break-word;
+}
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.5rem;
+  margin: 0.2rem 0 1rem;
+}
+.g-fig {
+  margin: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  aspect-ratio: 4/3;
+  background: #0b0f1a;
+  border: 1px solid var(--border);
+}
+.g-fig img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.modal-score {
+  font-size: 0.9rem;
+  color: #cbd5e1;
+  margin: 0 0 0.8rem;
+}
+.modal-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
   align-items: center;
-  margin-top: 0.5rem;
+  gap: 0.5rem 0.6rem;
 }
-.fb {
-  padding: 0.25rem 0.55rem;
-  font-size: 0.8rem;
-  cursor: pointer;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
-  background: #fff;
+.modal-actions .btn {
+  width: auto;
+  margin: 0;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.88rem;
 }
-.fb-cap {
-  font-size: 0.75rem;
+.bid {
+  font-size: 0.72rem;
   color: #64748b;
-}
-.bar {
-  height: 6px;
-  background: #e2e8f0;
-  border-radius: 4px;
-  margin-top: 0.5rem;
-  overflow: hidden;
-}
-.bar .fill {
-  height: 100%;
-  background: #f59e0b;
-}
-.foot {
-  font-size: 0.8rem;
-  color: #64748b;
-  margin-top: 1.5rem;
-  max-width: 48rem;
+  word-break: break-all;
 }
 </style>
