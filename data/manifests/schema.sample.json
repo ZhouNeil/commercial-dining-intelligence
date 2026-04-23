@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/commercial-dining/manifest-v1",
+  "title": "DatasetBuildManifest",
+  "type": "object",
+  "required": ["version", "generated_at_utc", "git_sha", "artifacts"],
+  "properties": {
+    "version": { "type": "string", "const": "1" },
+    "generated_at_utc": { "type": "string", "format": "date-time" },
+    "git_sha": { "type": "string" },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "relative_path", "bytes", "mtime_epoch"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "spatial_train_csv",
+              "retrieval_business_csv",
+              "retrieval_review_csv",
+              "model_survival_pkl",
+              "model_rating_pkl",
+              "retrieval_index_bundle"
+            ]
+          },
+          "relative_path": { "type": "string" },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "mtime_epoch": { "type": "number" },
+          "sha256": { "type": "string", "description": "可选；大文件可省略" }
+        }
+      }
+    }
+  }
+}

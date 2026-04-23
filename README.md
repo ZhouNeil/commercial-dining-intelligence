@@ -8,26 +8,30 @@ Our codebase strictly follows the Separation of Concerns (SoC) principle. The di
 
 ```text
 commercial-dining-intelligence/
-├── app/                        # Streamlit UI & Controller Logic (Role 5)
-│   └── main.py                 # Dual-mode entry point and API Glue Code (Controller)
-├── data/                       # Local storage for datasets and models (Git-ignored)
-│   ├── processed_csv/          # Cleaned, city-specific feature matrices (e.g., output_philly.csv)
-│   └── saved_models/           # Serialized city-specific predictive models (e.g., lr_philly.pkl)
-├── pipelines/                  # Data engineering, feature extraction & aggregation
-│   ├── data_cleaner.py         # Transforms raw Yelp JSONs into structured matrices (Role 1)
-│   ├── feature_pca.py          # Applies PCA for business DNA extraction (Role 5)
-│   └── feature_aggregator.py   # Online engine to calculate density & avg ratings (Role 1)
-├── models/                     # Core ML algorithms and predictive engines
-│   ├── knn_scratch.py          # Pure NumPy k-NN Engine (Radius & Top-K) (Role 2)
-│   ├── tourist_recommender.py  # Cross-modal embeddings & NLP representation (Role 3)
-│   ├── merchant_predictor.py   # Merchant survival/rating classification & regression (Role 4)
-│   └── rl_feedback_loop.py     # Multi-Armed Bandit environment & weight updates (Role 6)
-├── notebooks/                  # Jupyter notebooks for EDA, PCA visualization, and MVP testing
-├── scripts/                    # Shell scripts for environment setup and pipeline execution
-├── .gitignore                  # Prevents data/ and large model files from being tracked
-├── README.md                   # Project architecture, API contracts, and setup instructions
-└── requirements.txt            # Locked dependency registry for CI/CD (Role 6)
+├── backend/                    # Python 后端（FastAPI + services + dining_retrieval）
+│   ├── api/                    # FastAPI：health、states、search、merchant/predict
+│   ├── services/               # 推理与检索编排（供 API 与脚本调用）
+│   └── dining_retrieval/       # TF-IDF 索引、解析、重排、聚类辅助等
+├── frontend/                   # Vue 3 + Vite（/search、/merchant）
+├── data/                       # 数据集与模型（大文件 Git-ignored）
+│   ├── cleaned/                # business_dining / review_dining 等
+│   ├── manifests/              # schema.sample.json；active.json 由脚本生成
+│   └── ...
+├── pipelines/                  # 清洗、特征、空间特征工程
+├── models/                     # 训练脚本、artifacts 路径约定
+├── notebooks/                  # EDA 与实验
+├── scripts/                    # setup、run_api、ETL、manifest、export_openapi
+├── docs/                       # 仅存迁移/重构规划（见下）；项目概述待另补
+├── pytest.ini                  # pytest 的 pythonpath（含 backend）
+├── package.json                # 根目录仅转发 npm 脚本至 frontend/
+├── .gitignore
+├── README.md
+└── requirements.txt
 ```
+
+**`PYTHONPATH`**：`./scripts/run_api.sh`、`export_openapi.sh` 已设为 `backend` 与仓库根。若你自行 `python` / `uvicorn`，请使用 `PYTHONPATH=backend:.`（或只跑 pytest，已读 `pytest.ini`）。
+
+**规划与迁移说明**（数据层 / API / Vue 路线）：[`docs/refactor-plan-data-vue-api.md`](docs/refactor-plan-data-vue-api.md)。更短的一页式「项目概述」计划后续新增（如 `docs/PROJECT_OVERVIEW.md`）。
 
 ## 📥 Data Setup
 
@@ -63,16 +67,66 @@ If you do not want to use `uv`, you can also install dependencies with pip:
 pip install -r requirements.txt
 ```
 
-## Starting the App
+## 运行方式（Vue + API）
 
-Make sure you have the cleaned CSVs under `data/cleaned/`:
-- `business_dining.csv`
-- `review_dining.csv`
+准备 `data/cleaned/business_dining.csv` 与 `review_dining.csv`。首次调用检索接口时会在 `models/artifacts/` 构建 TF‑IDF 索引（可能较久）。
 
-On the first run, the app builds the retrieval index under `models/artifacts/` (may take a while).
+### HTTP API
 
-Run Streamlit:
+FastAPI：`GET /api/health`、`GET /api/v1/states`、`POST /api/v1/merchant/predict`、`POST /api/v1/search`。
 
 ```bash
-streamlit run app/main.py
+pip install -r requirements.txt   # 含 fastapi / uvicorn
+./scripts/run_api.sh              # 默认 http://0.0.0.0:8000
+# 或: PYTHONPATH=backend:. .venv/bin/uvicorn api.main:app --reload --port 8000
 ```
+
+- OpenAPI 文档：`http://localhost:8000/docs`
+- 可选环境变量：`API_REPO_ROOT`（仓库根）、`CORS_ORIGINS`（逗号分隔，默认 `*`）
+- 容器：`docker build -f Dockerfile.api -t cdi-api .`（需挂载 `data/`、`models/artifacts/`）
+
+开发与契约测试依赖：`pip install -r requirements-dev.txt`
+
+### Vue 前端
+
+先启动 API，再在仓库根执行 `npm run install:frontend`（首次）与 `npm run dev`。详见下文「Vue 前端（P4）」。
+
+### 数据 manifest（P0）
+
+```bash
+python scripts/write_data_manifest.py   # 写入 data/manifests/active.json（已 gitignore）
+```
+
+### SQLite 商户主档（P3）
+
+```bash
+python scripts/etl_csv_to_sqlite.py      # 需先有 data/cleaned/business_dining.csv
+```
+
+### Vue 前端（P4）
+
+依赖与脚本定义在 **`frontend/package.json`**；仓库根目录另有 **`package.json`**，仅用于转发常用命令（避免在根目录误跑时报错）。
+
+**方式一（推荐，在仓库根目录）：**
+
+```bash
+npm run install:frontend   # 首次
+npm run dev                # 等价于在 frontend/ 里 npm run dev
+```
+
+**方式二：**
+
+```bash
+cd frontend && npm install && npm run dev
+```
+
+开发代理将 `/api` 转到 `http://127.0.0.1:8000`，需先启动 `./scripts/run_api.sh`。详见 `frontend/README.md`。
+
+**更新 API 契约后（可选）：**
+
+```bash
+./scripts/export_openapi.sh   # 重写 frontend/openapi.json
+cd frontend && npm run gen:api
+```
+
+**静态部署**：`cd frontend && npm run build`，产物在 `frontend/dist/`；Nginx 示例见 `deploy/nginx-frontend.example.conf`。路由与接口见 `frontend/src/router` 与 `frontend/openapi.json`。
