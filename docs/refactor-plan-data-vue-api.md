@@ -2,6 +2,19 @@
 
 本文档面向「CSV 双轨数据 → 可演进的数据与接口层 → Vue 前端」的整体重构，供团队评审与拆任务使用。范围包括：**数据建模与是否引入 SQLite/DB**、**后端 API 对接现有模型**、**前端用 Vue 重写**，以及**分阶段任务拆分**。
 
+> **`docs/` 已精简**：除本文件外，历史说明、契约长文、对照表等均已移除。**运行命令、目录树**以仓库根目录 [`README.md`](../README.md) 为准；**字段级契约**以 `frontend/openapi.json`（及 `backend/api/schemas.py`）为准。后续可另增一份简短的「项目概述」Markdown。
+
+### 实施进度（仓库内已落地）
+
+| 阶段 | 状态 | 说明 |
+|------|------|------|
+| P0 | 已做 | `data/manifests/schema.sample.json`、`scripts/write_data_manifest.py`（数据契约细节待新「项目概述」或本文件迭代补全） |
+| P1 | 已做 | `backend/services/merchant_inference.py`、`backend/services/retrieval_service.py`；`tests/test_inference.py` 走服务层 |
+| P2 | 已做 | `backend/api/`（FastAPI）、`scripts/run_api.sh`、`Dockerfile.api`、`requirements-dev.txt` + pytest |
+| P3 | 已做 | `scripts/etl_csv_to_sqlite.py`（导入 `business_dining.csv` → SQLite） |
+| P4 | 已做（持续补全 UI） | `frontend/`：Vue Router、`/search` 与 `/merchant`、OpenAPI + `gen:api`、根 `package.json` 转发、`deploy/nginx-frontend.example.conf`；地图/详情等待办 |
+| P5 | 未做 | Parquet、模型 registry、限流等 |
+
 ---
 
 ## 1. 现状速览（为何要重构）
@@ -10,8 +23,8 @@
 
 | 轨 | 典型用途 | 数据形态（当前） | 主要消费者 |
 |----|-----------|------------------|------------|
-| **A. 检索 / 推荐** | 自然语言 + 筛选、TF-IDF 检索、地图展示 | `data/cleaned/`（如 `business_dining.csv`）、`data/slice_representative/` 备选；索引与向量在 `models/artifacts/` | `app/main.py`（Streamlit）、`TouristRetrieval` |
-| **B. 空间 / 商家预测** | 选址、空间特征、生存概率与星级回归 | `data/train_spatial.csv`（及划分出的 `train_merchant_split` / `test_spatial`）；模型 `*.pkl` 在 `models/artifacts/` | `merchant_predictor`、`SpatialFeatureEngineer`、`tests/test_inference`、`app/pages/2_商家选址预测.py` |
+| **A. 检索 / 推荐** | 自然语言 + 筛选、TF-IDF 检索、地图展示 | `data/cleaned/`（如 `business_dining.csv`）、`data/slice_representative/` 备选；索引与向量在 `models/artifacts/` | `backend/` 下 `dining_retrieval`、`services`、`api`；`frontend`（Vue） |
+| **B. 空间 / 商家预测** | 选址、空间特征、生存概率与星级回归 | `data/train_spatial.csv`（及划分出的 `train_merchant_split` / `test_spatial`）；模型 `*.pkl` 在 `models/artifacts/` | `merchant_predictor`、`SpatialFeatureEngineer`、`tests/test_inference`、`frontend` `/merchant` |
 
 两条轨**共享「餐厅」语义**，但**列结构、粒度、更新方式不同**：A 偏「展示与检索」，B 偏「宽表 + 已算好的空间特征」。CSV 在本地协作时易出现：**路径散落、重复拷贝、难以版本化「哪一份是线上真相」、大文件 Git 不友好**。
 
@@ -19,7 +32,7 @@
 
 - **双套 CSV**：同一业务概念（商户）在 A/B 中字段不一致，缺少统一实体 ID 与血缘说明。
 - **职责边界不清**：「清洗结果」「特征表」「训练集」混在同一目录层级，新人难判断从哪读。
-- **前端与模型耦合在 Streamlit**：难以复用 UI、难做权限与多端，也不利于与后端 API 契约化。
+- **（已解决）** 曾将前端与模型耦合在旧版 Streamlit MVP；现已拆为 Vue + OpenAPI + `backend/services`。
 - **推理与训练路径硬编码**：多处 `Path` / 相对路径，不利于部署到固定目录或容器。
 
 重构目标：**单一事实来源（或明确分层的多源）+ 可版本化的数据管线 + 与前端解耦的 HTTP API + Vue SPA**。
@@ -53,7 +66,7 @@ models/
 ### 2.3 「两套数据」如何收敛（策略选项）
 
 - **选项 1（推荐，渐进）**：**商户主档一份**（curated），空间特征由 pipeline **从主档 + 规则 JOIN** 生成 `features/train_spatial`，B 轨只读 features；A 轨读 curated + artifacts。两边通过 `business_id` 对齐。
-- **选项 2**：保留双表但**强制文档 + 契约**：在仓库中维护 `docs/data-contract.md`（字段表、更新频率、负责人），API 层只暴露 DTO，不暴露原始 CSV 路径给前端。
+- **选项 2**：保留双表但**强制文档 + 契约**：在 README / OpenAPI / 独立概述文档中维护字段表与血缘，API 层只暴露 DTO，不暴露原始 CSV 路径给前端。
 - **选项 3（长期）**：主档进 DB，特征表仍以 Parquet/SQLite 列存形式供 pandas/sklearn 批量读（见下节）。
 
 ---
@@ -106,8 +119,8 @@ Python API 服务 (推荐 FastAPI)
 
 ### 4.2 与「现有模型」的对接方式
 
-- **检索轨**：启动时 `build_or_load_index`，请求内只做 query + 重排；响应 DTO 与现 Streamlit 表格字段对齐，便于 Vue 表格与地图组件复用。
-- **预测轨**：将 `tests/test_inference.py` / `2_商家选址预测.py` 中的逻辑抽成 **纯函数服务层**（如 `services/merchant_inference.py`），API 只做参数校验、调用、错误映射。
+- **检索轨**：启动时 `build_or_load_index`，请求内只做 query + 重排；响应 DTO 与 Vue 表格字段对齐，便于地图等组件复用。
+- **预测轨**：将 `tests/test_inference.py` 等中的逻辑抽成 **纯函数服务层**（`backend/services/merchant_inference.py`），API 只做参数校验、调用、错误映射。
 - **进程与内存**：大 CSV/索引可 **懒加载 + 单例**；多 worker 时注意 **每进程一份内存** 或改用共享只读 mmap（进阶）。
 
 ### 4.3 API 契约（示例，便于拆任务）
@@ -125,7 +138,7 @@ Python API 服务 (推荐 FastAPI)
 
 - **Vite + Vue 3 + TypeScript**；状态可用 Pinia；UI 库任选（Element Plus / Naive UI）。
 - **地图**：MapLibre / Leaflet（与现 Folium 解耦）；坐标与后端一致 WGS84。
-- **与 Streamlit 关系**：Streamlit 可保留为「内部工具」或逐步下线，避免双维护时以 **OpenAPI 单源契约** 为准。
+- **与旧 MVP 关系**：Streamlit 已下线；以 **OpenAPI 单源契约** 与 Vue 为准。
 
 ---
 
@@ -133,8 +146,8 @@ Python API 服务 (推荐 FastAPI)
 
 | 阶段 | 内容 | 产出 |
 |------|------|------|
-| **P0** | 数据清单 + manifest；统一 `business_id`；文档化两套 CSV 血缘 | `docs/data-contract.md` + `data/manifests/*` |
-| **P1** | 抽出「推理服务模块」无 Streamlit 依赖；单元测试覆盖 predict | `services/*` + pytest |
+| **P0** | 数据清单 + manifest；统一 `business_id`；文档化两套 CSV 血缘 | `data/manifests/*` + 本文件 / 未来「项目概述」 |
+| **P1** | 抽出「推理服务模块」无 Streamlit 依赖；单元测试覆盖 predict | `backend/services/*` + pytest |
 | **P2** | FastAPI 最小实现：`/health` + `/merchant/predict` + `/search` | 可 Docker 运行 |
 | **P3** | SQLite 导入 curated 商户（脚本 ETL）；API 读库返回详情 | `scripts/etl_to_sqlite.py` |
 | **P4** | Vue 工程初始化；对接 OpenAPI；替换主流程页面 | 部署静态 + 反向代理 API |
@@ -146,32 +159,32 @@ Python API 服务 (推荐 FastAPI)
 
 ### Epic A — 数据治理与存储决策
 
-- [ ] **A1** 盘点仓库内所有 CSV 路径与消费者（脚本 + app + notebooks），输出表格（路径、用途、更新方）。
-- [ ] **A2** 编写 `data-contract`：主键、必填字段、A/B 轨对齐规则。
-- [ ] **A3** 实现 `manifest` 生成步骤（嵌入 `pipelines` 或 `scripts`），CI 可选校验「指针存在」。
+- [x] **A1** 盘点仓库内所有 CSV 路径与消费者（脚本、notebooks、`backend/` 等），输出表格（路径、用途、更新方）。
+- [x] **A2** 数据契约：主键与 A/B 轨规则曾独立成文，现已下线；核心约定保留在本文件 §1–2、§4 与 OpenAPI；完整字段表待新「项目概述」。
+- [x] **A3** 实现 `manifest` 生成步骤（嵌入 `pipelines` 或 `scripts`），CI 可选校验「指针存在」。
 - [ ] **A4** 评审会：确认 **SQLite 范围**（仅主档 vs 含评论）与 **Parquet 范围**（train_spatial）。
-- [ ] **A5**（可选）实现 `etl_csv_to_sqlite.py` + 最小 schema + 迁移说明。
+- [x] **A5**（可选）实现 `etl_csv_to_sqlite.py` + 最小 schema + 迁移说明。
 
 ### Epic B — 模型与推理服务化
 
-- [ ] **B1** 抽取 `merchant_inference.predict(...)`（输入 lat/lon/city/categories，输出概率与星级 + 部分特征）。
-- [ ] **B2** 抽取 `retrieval_search.search(...)` 或与 `TouristRetrieval` 薄封装。
-- [ ] **B3** 定义 Pydantic 请求/响应模型与 OpenAPI；错误码规范。
-- [ ] **B4** FastAPI 路由实现 + 启动文档（含用 `.venv` 避免 NumPy 冲突）。
-- [ ] **B5** 容器化 `Dockerfile`（API）+ 数据卷挂载约定。
+- [x] **B1** 抽取 `merchant_inference.predict(...)`（输入 lat/lon/city/categories，输出概率与星级 + 部分特征）。
+- [x] **B2** 抽取 `retrieval_search.search(...)` 或与 `TouristRetrieval` 薄封装。
+- [x] **B3** 定义 Pydantic 请求/响应模型与 OpenAPI；错误码规范。
+- [x] **B4** FastAPI 路由实现 + 启动文档（含用 `.venv` 避免 NumPy 冲突）。
+- [x] **B5** 容器化 `Dockerfile`（API）+ 数据卷挂载约定。
 
 ### Epic C — Vue 前端
 
-- [ ] **C1** 初始化 Vue3+TS+Vite 仓库（monorepo 子目录 `frontend/` 或独立 repo 决策）。
-- [ ] **C2** 生成 OpenAPI 客户端（openapi-typescript-fetch / orval）。
-- [ ] **C3** 页面：检索页（表单 + 列表 + 地图占位）；商家选址页（地图选点 + 品类 + 结果卡片）。
-- [ ] **C4** 环境变量：`VITE_API_BASE_URL`；本地 dev proxy。
-- [ ] **C5** 构建与部署（静态资源 + Nginx / Vercel 等）。
+- [x] **C1** 初始化 Vue3+TS+Vite 仓库（monorepo 子目录 `frontend/` 或独立 repo 决策）。
+- [x] **C2** 生成 OpenAPI 类型：`frontend/openapi.json` + `npm run gen:api` → `src/api/generated.d.ts`，`src/api/client.ts` 封装 fetch。
+- [x] **C3** 页面：`/` 健康、`/search` 检索表格、`/merchant` 选址表单与结果卡（地图选点留作后续）。
+- [x] **C4** 环境变量：`VITE_API_BASE_URL`；本地 dev proxy。
+- [x] **C5** 构建与部署：`npm run build` → `frontend/dist`；示例 `deploy/nginx-frontend.example.conf`。
 
 ### Epic D — 下线与迁移
 
-- [ ] **D1** 功能对照表：Streamlit 每个能力是否在 Vue 有对应。
-- [ ] **D2** 删除或归档死代码路径；更新根 `README` 启动方式。
+- [x] **D1** 前端路由与能力由 `frontend/` 与 OpenAPI 体现（独立对照表已下线）。
+- [ ] **D2** 删除或归档死代码路径；维护根 `README` 与（计划中的）`docs/PROJECT_OVERVIEW.md`（或同类「项目概述」）。
 - [ ] **D3**（可选）E2E：Playwright 对关键 API + 页面。
 
 ---
@@ -186,8 +199,8 @@ Python API 服务 (推荐 FastAPI)
 
 ## 8. 文档维护
 
-- 本文档路径：`docs/refactor-plan-data-vue-api.md`。
-- 实施过程中将 **实际表结构、API 基址、环境变量** 同步到 `README.md` 或 `docs/data-contract.md`（待 A2 创建）。
+- 本文档路径：`docs/refactor-plan-data-vue-api.md`（**`docs/` 下唯一长期保留的规划/迁移说明**）。
+- **实际表结构、API 基址、环境变量**：维护在根目录 `README.md`；字段级请求/响应以 OpenAPI 为准。若需要对外/答辩用的一页纸说明，可新增 `docs/PROJECT_OVERVIEW.md`（名称自定），不必再拆多份旧式长文。
 
 ---
 
