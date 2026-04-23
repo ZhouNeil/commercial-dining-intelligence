@@ -238,3 +238,6 @@ data/saved_models/*
 
 # Ignore local environment variables or secrets
 .env
+
+train_spatial.csv
+test_spatial.csv
