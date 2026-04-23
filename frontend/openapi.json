@@ -1,0 +1,493 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Commercial Dining Intelligence API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/merchant/predict": {
+      "post": {
+        "summary": "Merchant Predict",
+        "operationId": "merchant_predict_api_v1_merchant_predict_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MerchantPredictRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MerchantPredictResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/states": {
+      "get": {
+        "summary": "List States",
+        "operationId": "list_states_api_v1_states_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/search": {
+      "post": {
+        "summary": "Search V1",
+        "operationId": "search_v1_api_v1_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": "0.1.0"
+          },
+          "repo_root": {
+            "type": "string",
+            "title": "Repo Root"
+          },
+          "spatial_csv": {
+            "type": "boolean",
+            "title": "Spatial Csv"
+          },
+          "survival_pkl": {
+            "type": "boolean",
+            "title": "Survival Pkl"
+          },
+          "rating_pkl": {
+            "type": "boolean",
+            "title": "Rating Pkl"
+          },
+          "retrieval_business_csv": {
+            "type": "boolean",
+            "title": "Retrieval Business Csv"
+          },
+          "retrieval_index": {
+            "type": "boolean",
+            "title": "Retrieval Index"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "repo_root",
+          "spatial_csv",
+          "survival_pkl",
+          "rating_pkl",
+          "retrieval_business_csv",
+          "retrieval_index"
+        ],
+        "title": "HealthResponse"
+      },
+      "MerchantPredictRequest": {
+        "properties": {
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City",
+            "description": "过滤参考商户；为空则取表头前 N 行"
+          },
+          "lat": {
+            "type": "number",
+            "title": "Lat"
+          },
+          "lon": {
+            "type": "number",
+            "title": "Lon"
+          },
+          "category_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Category Keys",
+            "description": "train_spatial 中的 cat_* 列名，如 cat_coffee_&_tea"
+          },
+          "max_rows_if_no_city": {
+            "type": "integer",
+            "maximum": 50000.0,
+            "minimum": 100.0,
+            "title": "Max Rows If No City",
+            "default": 2000
+          }
+        },
+        "type": "object",
+        "required": [
+          "lat",
+          "lon",
+          "category_keys"
+        ],
+        "title": "MerchantPredictRequest"
+      },
+      "MerchantPredictResponse": {
+        "properties": {
+          "survival_probability": {
+            "type": "number",
+            "title": "Survival Probability"
+          },
+          "predicted_stars": {
+            "type": "number",
+            "title": "Predicted Stars"
+          },
+          "reference_row_count": {
+            "type": "integer",
+            "title": "Reference Row Count"
+          },
+          "city_filter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City Filter"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Metrics"
+          },
+          "live_feature_preview": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Live Feature Preview"
+          }
+        },
+        "type": "object",
+        "required": [
+          "survival_probability",
+          "predicted_stars",
+          "reference_row_count"
+        ],
+        "title": "MerchantPredictResponse"
+      },
+      "SearchRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "Step2 自然语言；discover_only 时可空",
+            "default": ""
+          },
+          "state": {
+            "type": "string",
+            "title": "State",
+            "description": "USPS 州码"
+          },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City",
+            "description": "可选城市名（精确匹配）"
+          },
+          "top_k": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Top K",
+            "default": 10
+          },
+          "pool_k": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 500.0,
+                "minimum": 15.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pool K",
+            "description": "内部候选池 Top-N（前端默认 45）"
+          },
+          "keywords_extra": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keywords Extra",
+            "description": "额外关键词"
+          },
+          "force_rebuild_index": {
+            "type": "boolean",
+            "title": "Force Rebuild Index",
+            "default": false
+          },
+          "discover_only": {
+            "type": "boolean",
+            "title": "Discover Only",
+            "description": "True = 「Find general restaurants here」",
+            "default": false
+          },
+          "cuisines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Cuisines",
+            "description": "菜系多选：Sushi, Steakhouse, Korean, …"
+          },
+          "w_semantic": {
+            "type": "number",
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "W Semantic",
+            "default": 0.85
+          },
+          "w_rating": {
+            "type": "number",
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "W Rating",
+            "default": 1.05
+          },
+          "w_price": {
+            "type": "number",
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "W Price",
+            "default": 0.15
+          },
+          "w_distance": {
+            "type": "number",
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "W Distance",
+            "default": 0.2
+          },
+          "w_popularity": {
+            "type": "number",
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "W Popularity",
+            "default": 0.1
+          },
+          "liked_business_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Liked Business Ids"
+          },
+          "disliked_business_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Disliked Business Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "title": "SearchRequest",
+        "description": "与前端 `/search`（Step1–2 与侧栏权重）对齐的检索请求字段。"
+      },
+      "SearchResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results",
+          "meta"
+        ],
+        "title": "SearchResponse"
+      },
+      "StatesResponse": {
+        "properties": {
+          "states": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "States"
+          }
+        },
+        "type": "object",
+        "required": [
+          "states"
+        ],
+        "title": "StatesResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

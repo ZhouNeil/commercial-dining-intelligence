@@ -216,6 +216,9 @@ data/*.json
 data/*.parquet
 data/processed_csv/*
 
+# 本地生成的数据 manifest（`python scripts/write_data_manifest.py`）
+data/manifests/active.json
+
 # Stratified slice (not in repo; regenerate: python scripts/build_representative_slice.py)
 data/slice_representative/
 
@@ -238,3 +241,6 @@ data/saved_models/*
 
 # Ignore local environment variables or secrets
 .env
+
+# 根目录 npm 脚本 / frontend 依赖（勿提交 lock 与 node_modules 除非团队约定）
+node_modules/

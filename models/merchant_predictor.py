@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+
 import joblib
 import pandas as pd
 import numpy as np
@@ -215,5 +217,11 @@ class AblationMerchantPredictor:
         joblib.dump(final_reg_model, f"{MODEL_DIR}/global_rating_model.pkl")
 
 if __name__ == "__main__":
-    predictor = AblationMerchantPredictor()
+    repo = Path(__file__).resolve().parents[1]
+    split_train = repo / "data" / "train_merchant_split.csv"
+    split_test = repo / "data" / "test_spatial.csv"
+    if split_train.is_file() and split_test.is_file():
+        predictor = AblationMerchantPredictor(str(split_train), str(split_test))
+    else:
+        predictor = AblationMerchantPredictor()
     predictor.train_pipeline()
