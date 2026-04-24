@@ -1,0 +1,13 @@
+{
+  "name": "commercial-dining-intelligence",
+  "private": true,
+  "description": "根目录脚本：转发到 frontend/。首次请先执行 npm run install:frontend",
+  "scripts": {
+    "install:frontend": "npm install --prefix frontend",
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "preview": "npm --prefix frontend run preview",
+    "export:openapi": "./scripts/export_openapi.sh",
+    "gen:api": "npm --prefix frontend run gen:api"
+  }
+}

@@ -42,7 +42,7 @@ def load_pca_model(filepath):
 
 def transform_new_query(pca_model, user_input_vector):
     """
-    Transform a brand new user query (e.g., from the Streamlit UI) using the fitted PCA.
+    Transform a brand new user query (e.g., from the web UI) using the fitted PCA.
     
     Parameters:
     pca_model: The loaded PCA object.

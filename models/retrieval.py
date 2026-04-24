@@ -1,10 +1,10 @@
 """
 Backward-compatible re-export.
 
-The recommendation retrieval logic now lives in `app/retrieval.py` so the Streamlit MVP
-can keep all app-related code under one folder.
+The recommendation retrieval logic lives in `backend/dining_retrieval/core/retrieval.py`; this module re-exports
+for any legacy `from models.retrieval import ...` imports.
 """
 
-from app.core.retrieval import RestaurantSearchIndex, TouristRetrieval
+from dining_retrieval.core.retrieval import RestaurantSearchIndex, TouristRetrieval
 
 __all__ = ["RestaurantSearchIndex", "TouristRetrieval"]
