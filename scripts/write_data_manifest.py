@@ -21,7 +21,7 @@ TRACKED = [
     ("spatial_train_csv", "train_spatial.csv"),
     ("retrieval_business_csv", "data/cleaned/business_dining.csv"),
     ("retrieval_review_csv", "data/cleaned/review_dining.csv"),
-    ("model_survival_pkl", "models/artifacts/advanced_survival_classifier.pkl"),
+    ("model_survival_pkl", "models/artifacts/global_survival_model.pkl"),
     ("model_rating_pkl", "models/artifacts/global_rating_model.pkl"),
     ("spatial_split_train", "data/train_merchant_split.csv"),
     ("spatial_split_test", "data/test_spatial.csv"),

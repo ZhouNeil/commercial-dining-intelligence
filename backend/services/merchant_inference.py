@@ -1,7 +1,7 @@
 """
 Merchant site inference: spatial features + saved sklearn models (no UI).
 
-Survival: ``models/artifacts/advanced_survival_classifier.pkl`` (binary proba).
+Survival: ``models/artifacts/global_survival_model.pkl`` (binary proba).
 Stars: ``models/artifacts/global_rating_model.pkl`` (regression).
 """
 from __future__ import annotations
@@ -50,7 +50,7 @@ def spatial_train_csv_path(repo_root: Path) -> Path:
 def artifact_paths(repo_root: Path) -> Tuple[Path, Path]:
     """(survival_classifier, rating_regressor) under models/artifacts/."""
     d = repo_root / "models" / "artifacts"
-    return d / "advanced_survival_classifier.pkl", d / "global_rating_model.pkl"
+    return d / "global_survival_model.pkl", d / "global_rating_model.pkl"
 
 
 def load_spatial_reference(repo_root: Path) -> pd.DataFrame:
@@ -78,7 +78,7 @@ def slice_local_reference(
 
 @lru_cache(maxsize=4)
 def _survival_model(repo_root_s: str):
-    p = Path(repo_root_s) / "models" / "artifacts" / "advanced_survival_classifier.pkl"
+    p = Path(repo_root_s) / "models" / "artifacts" / "global_survival_model.pkl"
     return joblib.load(p)
 
 
