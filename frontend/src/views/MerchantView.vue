@@ -5,7 +5,7 @@ import { postMerchantPredict, type MerchantPredictResponse } from "../api/client
 const city = ref("Philadelphia");
 const lat = ref(39.9526);
 const lon = ref(-75.1652);
-/** 逗号或换行分隔的 cat_* 列名 */
+/** comma- or newline-separated cat_* column names */
 const categoriesText = ref("cat_coffee_&_tea, cat_fast_food");
 const maxRows = ref(2000);
 const loading = ref(false);
@@ -24,7 +24,7 @@ async function run() {
   result.value = null;
   const keys = categoryKeys.value;
   if (!keys.length) {
-    err.value = "请至少填写一个品类列名（如 cat_fast_food）。";
+    err.value = "Please enter at least one category column name (e.g. cat_fast_food).";
     return;
   }
   loading.value = true;
@@ -46,31 +46,31 @@ async function run() {
 
 <template>
   <section class="panel">
-    <nav class="back"><router-link to="/">← 首页</router-link></nav>
-    <h1>商家选址预测</h1>
+    <nav class="back"><router-link to="/">← Home</router-link></nav>
+    <h1>Merchant Location Prediction</h1>
     <p class="muted">
-      调用 <code>POST /api/v1/merchant/predict</code>。需 <code>data/train_spatial.csv</code> 与两个
-      <code>global_*_model.pkl</code>。
+      Calls <code>POST /api/v1/merchant/predict</code>. Requires <code>data/train_spatial.csv</code> and two
+      <code>global_*_model.pkl</code> files.
     </p>
 
     <div class="form">
-      <label>城市（过滤参考商户，可空）</label>
+      <label>City (filters reference merchants, optional)</label>
       <input v-model="city" type="text" />
 
-      <label>纬度 / 经度</label>
+      <label>Latitude / Longitude</label>
       <div class="row">
         <input v-model.number="lat" type="number" step="any" />
         <input v-model.number="lon" type="number" step="any" />
       </div>
 
-      <label>品类列名（<code>cat_*</code>，逗号或换行分隔）</label>
+      <label>Category columns (<code>cat_*</code>, comma- or newline-separated)</label>
       <textarea v-model="categoriesText" rows="4" placeholder="cat_coffee_&_tea&#10;cat_fast_food" />
 
-      <label>无 city 列时参考行数上限</label>
+      <label>Max reference rows when no city is set</label>
       <input v-model.number="maxRows" type="number" min="100" max="50000" class="short" />
 
       <button type="button" :disabled="loading" @click="run">
-        {{ loading ? "计算中…" : "计算预测" }}
+        {{ loading ? "Calculating…" : "Run Prediction" }}
       </button>
     </div>
 
@@ -78,21 +78,21 @@ async function run() {
 
     <div v-if="result" class="cards">
       <div class="card">
-        <div class="label">开业概率</div>
+        <div class="label">Survival Probability</div>
         <div class="value">{{ (result.survival_probability * 100).toFixed(1) }}%</div>
       </div>
       <div class="card">
-        <div class="label">预测星级</div>
+        <div class="label">Predicted Stars</div>
         <div class="value">{{ result.predicted_stars.toFixed(2) }} / 5</div>
       </div>
       <div class="card">
-        <div class="label">参考商户数</div>
+        <div class="label">Reference Merchants</div>
         <div class="value">{{ result.reference_row_count }}</div>
       </div>
     </div>
 
     <template v-if="result && Object.keys(result.live_feature_preview || {}).length">
-      <h2>特征预览</h2>
+      <h2>Feature Preview</h2>
       <pre class="code">{{ JSON.stringify(result.live_feature_preview, null, 2) }}</pre>
     </template>
   </section>

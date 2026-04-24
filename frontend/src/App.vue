@@ -6,8 +6,8 @@
     <header class="top">
       <router-link to="/" class="brand">Commercial Dining</router-link>
       <nav>
-        <router-link to="/search">检索</router-link>
-        <router-link to="/merchant">商家选址</router-link>
+        <router-link to="/search">Search</router-link>
+        <router-link to="/merchant">Merchant</router-link>
       </nav>
     </header>
     <main class="main">

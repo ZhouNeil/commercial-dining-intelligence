@@ -48,7 +48,7 @@ const rlPrevIntentName = ref<string | null>(null);
 const rlLastQueryText = ref("");
 const rlLastApplied = ref(false);
 
-/** 可拖动侧栏宽度 */
+/** draggable sidebar width */
 const railW = ref(300);
 const railMin = 220;
 const railMax = 520;
@@ -75,7 +75,7 @@ const metaPool = computed(() => {
   const pr = m.pool_rows;
   const pk = m.pool_k;
   const rr = m.reranked;
-  return `候选池 ${pr} 行（内部 Top-${pk}）${rr ? " · 已 v2 重排" : ""}`;
+  return `Pool: ${pr} rows (internal Top-${pk})${rr ? " · v2 re-ranked" : ""}`;
 });
 
 const rlBadgeText = computed(() => {
@@ -368,8 +368,8 @@ function toggleDislike(bid: string) {
 }
 
 function feedbackLabel(bid: string): string {
-  if (likedIds.value.includes(bid)) return "已标记 👍";
-  if (dislikedIds.value.includes(bid)) return "已标记 👎";
+  if (likedIds.value.includes(bid)) return "Liked 👍";
+  if (dislikedIds.value.includes(bid)) return "Disliked 👎";
   return "";
 }
 
@@ -403,7 +403,7 @@ function resetFeedback() {
       @click="railCollapsed = false"
     >
       <span class="fab-icon">☰</span>
-      筛选与权重
+      Filters & Weights
     </button>
 
     <aside
@@ -414,13 +414,13 @@ function resetFeedback() {
     >
       <header class="rail-head">
         <div>
-          <p class="rail-eyebrow">检索参数</p>
-          <h2 class="rail-title">地点 · 偏好 · 排序</h2>
+          <p class="rail-eyebrow">Search Parameters</p>
+          <h2 class="rail-title">Location · Preferences · Sort</h2>
         </div>
         <button
           type="button"
           class="rail-collapse"
-          title="收起侧栏"
+          title="Collapse sidebar"
           @click="railCollapsed = true"
         >
           ⟨
@@ -429,13 +429,13 @@ function resetFeedback() {
 
       <div class="rail-scroll">
         <section class="panel">
-          <h3 class="h3">Step 1 — 位置</h3>
-          <label class="lbl">州</label>
+          <h3 class="h3">Step 1 — Location</h3>
+          <label class="lbl">State</label>
           <select v-model="browseState" class="inp">
             <option v-for="s in states" :key="s" :value="s">{{ s }}</option>
           </select>
-          <label class="lbl">城市（可选，精确匹配）</label>
-          <input v-model="browseCity" class="inp" type="text" placeholder="例如 Philadelphia" />
+          <label class="lbl">City (optional, exact match)</label>
+          <input v-model="browseCity" class="inp" type="text" placeholder="e.g. Philadelphia" />
 
           <button
             type="button"
@@ -443,22 +443,22 @@ function resetFeedback() {
             :disabled="loading || !browseState"
             @click="runDiscover"
           >
-            发现附近餐厅
+            Discover Nearby Restaurants
           </button>
         </section>
 
         <section class="panel">
-          <h3 class="h3">Step 2 — 偏好与 NL</h3>
+          <h3 class="h3">Step 2 — Preferences & NL</h3>
           <details :open="step2Open" class="details">
-            <summary>自然语言、菜系、关键词</summary>
-            <label class="lbl">描述需求</label>
+            <summary>Natural language, cuisine, keywords</summary>
+            <label class="lbl">Describe what you're looking for</label>
             <textarea
               v-model="nlQuery"
               class="inp area"
               rows="3"
-              placeholder="例：便宜寿司、近 NYU、3 km 内"
+              placeholder="e.g. cheap sushi near NYU within 3 km"
             />
-            <span class="lbl">菜系</span>
+            <span class="lbl">Cuisine</span>
             <div class="cuisine-grid">
               <label v-for="c in CUISINES" :key="c" class="cuisine"
                 ><input
@@ -469,9 +469,9 @@ function resetFeedback() {
                 {{ c }}</label
               >
             </div>
-            <label class="lbl">额外关键词</label>
+            <label class="lbl">Extra keywords</label>
             <input v-model="keywords" class="inp" type="text" />
-            <label class="lbl">结果条数 Top-K</label>
+            <label class="lbl">Results count Top-K</label>
             <input v-model.number="topK" class="inp narrow" type="number" min="3" max="30" />
           </details>
           <button
@@ -480,20 +480,20 @@ function resetFeedback() {
             :disabled="loading || !browseState"
             @click="runRefine"
           >
-            按偏好更新
+            Update by Preference
           </button>
         </section>
 
         <section class="panel panel-accent">
-          <h3 class="h3">排序权重</h3>
-          <p class="hint">与后端多因子 <code>final_score</code> 对应；可拖动右缘调整侧栏宽度。</p>
+          <h3 class="h3">Sort Weights</h3>
+          <p class="hint">Maps to the backend multi-factor <code>final_score</code>; drag the right edge to resize the sidebar.</p>
           <label class="chk"
-            ><input v-model="forceRebuild" type="checkbox" /> 强制重建 TF-IDF 索引</label
+            ><input v-model="forceRebuild" type="checkbox" /> Force rebuild TF-IDF index</label
           >
 
           <div class="rng">
             <div class="rng-h">
-              <span>w_semantic 文本</span>
+              <span>w_semantic text</span>
               <span class="rng-v">{{ wSemantic.toFixed(2) }}</span>
             </div>
             <input
@@ -507,7 +507,7 @@ function resetFeedback() {
           </div>
           <div class="rng">
             <div class="rng-h">
-              <span>w_rating 星级</span>
+              <span>w_rating stars</span>
               <span class="rng-v">{{ wRating.toFixed(2) }}</span>
             </div>
             <input
@@ -521,7 +521,7 @@ function resetFeedback() {
           </div>
           <div class="rng">
             <div class="rng-h">
-              <span>w_price 价格</span>
+              <span>w_price price</span>
               <span class="rng-v">{{ wPrice.toFixed(2) }}</span>
             </div>
             <input
@@ -535,7 +535,7 @@ function resetFeedback() {
           </div>
           <div class="rng">
             <div class="rng-h">
-              <span>w_distance 距离</span>
+              <span>w_distance distance</span>
               <span class="rng-v">{{ wDistance.toFixed(2) }}</span>
             </div>
             <input
@@ -549,7 +549,7 @@ function resetFeedback() {
           </div>
           <div class="rng">
             <div class="rng-h">
-              <span>w_popularity 热度</span>
+              <span>w_popularity popularity</span>
               <span class="rng-v">{{ wPopularity.toFixed(2) }}</span>
             </div>
             <input
@@ -562,10 +562,10 @@ function resetFeedback() {
             />
           </div>
 
-          <h3 class="h3 mt1">v2 候选池</h3>
+          <h3 class="h3 mt1">v2 Candidate Pool</h3>
           <div class="rng">
             <div class="rng-h">
-              <span>池大小（重排用）</span>
+              <span>Pool size (for re-ranking)</span>
               <span class="rng-v">{{ poolK }}</span>
             </div>
             <input v-model.number="poolK" type="range" min="15" max="120" step="5" />
@@ -577,40 +577,40 @@ function resetFeedback() {
     <div
       v-show="!railCollapsed"
       class="gutter"
-      title="拖动调整侧栏宽度"
+      title="Drag to resize sidebar"
       @mousedown="startRailDrag"
     />
 
     <main class="main">
       <nav class="back">
-        <router-link to="/" class="back-a">← 返回首页</router-link>
+        <router-link to="/" class="back-a">← Back to Home</router-link>
       </nav>
 
       <header class="hero">
         <h1 class="hero-title">Dining Intelligence</h1>
         <p class="hero-sub">
-          先选州/市做广泛发现，再用自然语言与菜系精化。侧栏可收起，点击卡片查看相册与详情。
+          Select a state/city for broad discovery, then refine with natural language and cuisine filters. The sidebar can be collapsed; click a card to view photos and details.
         </p>
-        <p v-if="loading" class="status-pill">检索中…</p>
+        <p v-if="loading" class="status-pill">Searching…</p>
       </header>
 
       <p v-if="err" class="err-banner">{{ err }}</p>
 
       <div v-if="data && data.results.length" class="results-wrap">
         <div class="results-head">
-          <h2>推荐结果</h2>
+          <h2>Recommended Results</h2>
           <p class="sub">{{ metaPool }}</p>
           <p v-if="rlBadgeText" class="rl-badge">{{ rlBadgeText }}</p>
           <details v-if="metaParsed" class="json-details">
-            <summary>规则解析</summary>
+            <summary>Parsed Rules</summary>
             <pre class="json-pre">{{ JSON.stringify(metaParsed, null, 2) }}</pre>
             <p v-if="resolvedQueryText" class="qt">query_text: <code>{{ resolvedQueryText }}</code></p>
           </details>
           <div class="results-tools">
             <button type="button" class="btn-ghost" :disabled="loading || !lastMode" @click="refreshResults">
-              刷新 RL 推荐
+              Refresh RL recommand
             </button>
-            <button type="button" class="btn-ghost" @click="resetFeedback">重置 👍/👎</button>
+            <button type="button" class="btn-ghost" @click="resetFeedback">Reset 👍/👎</button>
           </div>
         </div>
 
@@ -641,7 +641,7 @@ function resetFeedback() {
                   {{ str(row as Record<string, unknown>, "city") }},
                   {{ str(row as Record<string, unknown>, "state") }}
                   · {{ num(row as Record<string, unknown>, "stars")?.toFixed(1) ?? "—" }}★
-                  · {{ str(row as Record<string, unknown>, "review_count") }} 条评论
+                  · {{ str(row as Record<string, unknown>, "review_count") }} reviews
                 </p>
                 <p class="r-dim">
                   {{ fmtPriceTier((row as Record<string, unknown>).price_tier) }} ·
@@ -671,7 +671,7 @@ function resetFeedback() {
                 <span v-if="feedbackLabel(str(row as Record<string, unknown>, 'business_id'))" class="fb-t">{{
                   feedbackLabel(str(row as Record<string, unknown>, "business_id"))
                 }}</span>
-                <span class="tap-hint">点卡片其他区域看相册</span>
+                <span class="tap-hint">Click card to view photos</span>
               </div>
               <div class="bar" @click.stop>
                 <div
@@ -684,9 +684,9 @@ function resetFeedback() {
         </ul>
       </div>
 
-      <p v-else-if="data" class="empty">暂无结果，请尝试更换州/市或放宽条件。</p>
+      <p v-else-if="data" class="empty">No results found. Try a different state/city or broaden your filters.</p>
 
-      <p class="foot">TF-IDF 余弦 + 多因子重排，与 <code>recommend_keywords</code> 一致</p>
+      <p class="foot">TF-IDF cosine + multi-factor re-ranking, consistent with <code>recommend_keywords</code></p>
     </main>
 
     <Teleport to="body">
@@ -697,8 +697,8 @@ function resetFeedback() {
         @keydown.escape.prevent="closeDetail"
       >
         <div class="modal-back" @click="closeDetail" />
-        <div class="modal-box" role="dialog" aria-modal="true" aria-label="餐厅详情" @click.stop>
-          <button type="button" class="modal-x" aria-label="关闭" @click="closeDetail">×</button>
+        <div class="modal-box" role="dialog" aria-modal="true" aria-label="Restaurant Details" @click.stop>
+          <button type="button" class="modal-x" aria-label="Close" @click="closeDetail">×</button>
           <h2 class="modal-title">{{ str(selectedDetail, "name") }}</h2>
           <p class="modal-sub">
             {{ str(selectedDetail, "address") }} · {{ str(selectedDetail, "city") }},
@@ -711,7 +711,7 @@ function resetFeedback() {
             <figure v-for="(u, gi) in photoUrls(selectedDetail)" :key="gi" class="g-fig">
               <img
                 :src="u"
-                :alt="`图 ${gi + 1}`"
+                :alt="`Photo ${gi + 1}`"
                 loading="lazy"
                 referrerpolicy="no-referrer"
                 @error="onGalleryImgErr"
@@ -719,8 +719,8 @@ function resetFeedback() {
             </figure>
           </div>
           <p class="modal-score">
-            <strong>{{ num(selectedDetail, "stars")?.toFixed(1) ?? "—" }}</strong> 星 ·
-            {{ str(selectedDetail, "review_count") }} 条评论 ·
+            <strong>{{ num(selectedDetail, "stars")?.toFixed(1) ?? "—" }}</strong> stars ·
+            {{ str(selectedDetail, "review_count") }} reviews ·
             {{ fmtPriceTier(selectedDetail["price_tier"]) }} · {{ distLabel(selectedDetail) }}
           </p>
           <div v-if="str(selectedDetail, 'business_id')" class="modal-actions">

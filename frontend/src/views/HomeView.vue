@@ -17,15 +17,15 @@ onMounted(async () => {
 <template>
   <section class="panel">
     <h1>Commercial Dining</h1>
-    <p class="muted">先启动后端：<code>./scripts/run_api.sh</code>（端口 8000），再使用下方页面。</p>
+    <p class="muted">Start the backend first: <code>./scripts/run_api.sh</code> (port 8000), then use the pages below.</p>
     <nav class="nav">
-      <router-link to="/search">餐厅检索</router-link>
-      <router-link to="/merchant">商家选址预测</router-link>
+      <router-link to="/search">Restaurant Search</router-link>
+      <router-link to="/merchant">Merchant Location Prediction</router-link>
     </nav>
-    <h2>服务健康</h2>
+    <h2>Service Health</h2>
     <p v-if="err" class="err">{{ err }}</p>
     <pre v-else-if="health" class="code">{{ JSON.stringify(health, null, 2) }}</pre>
-    <p v-else class="muted">加载中…</p>
+    <p v-else class="muted">Loading…</p>
   </section>
 </template>
 
