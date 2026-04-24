@@ -22,7 +22,9 @@ def _cosine_rows(M: csr_matrix, norms: np.ndarray, i: int, j: int) -> float:
     """Cosine similarity between TF-IDF rows i and j (same space as retrieval)."""
     if i < 0 or j < 0 or i >= M.shape[0] or j >= M.shape[0]:
         return 0.0
-    dot = float(M.getrow(i).dot(M.getrow(j).T).A[0, 0])
+    # Some SciPy sparse matrix variants do not expose `.A`, so convert the 1x1 result
+    # with `.toarray()` to keep the reranker portable across environments.
+    dot = float(M.getrow(i).dot(M.getrow(j).T).toarray()[0, 0])
     denom = float(norms[i]) * float(norms[j]) + 1e-9
     return dot / denom
 

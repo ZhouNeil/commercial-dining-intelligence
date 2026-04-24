@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import {
   getStates,
   postSearch,
+  type SearchActionEvent,
   type SearchRequest,
   type SearchResponse,
 } from "../api/client";
@@ -40,6 +41,12 @@ const lastMode = ref<"discover" | "refine" | null>(null);
 
 const likedIds = ref<string[]>([]);
 const dislikedIds = ref<string[]>([]);
+const pendingRlEvents = ref<SearchActionEvent[]>([]);
+const rlUserOverrideActive = ref(false);
+const rlPrevSelectedArm = ref<string | null>(null);
+const rlPrevIntentName = ref<string | null>(null);
+const rlLastQueryText = ref("");
+const rlLastApplied = ref(false);
 
 /** 可拖动侧栏宽度 */
 const railW = ref(300);
@@ -69,6 +76,11 @@ const metaPool = computed(() => {
   const pk = m.pool_k;
   const rr = m.reranked;
   return `候选池 ${pr} 行（内部 Top-${pk}）${rr ? " · 已 v2 重排" : ""}`;
+});
+
+const rlBadgeText = computed(() => {
+  const m = data.value?.meta as Record<string, unknown> | undefined;
+  return m && typeof m.rl_strategy_label === "string" ? m.rl_strategy_label : "";
 });
 
 function startRailDrag(e: MouseEvent) {
@@ -116,7 +128,7 @@ onUnmounted(() => {
   endRailDrag();
 });
 
-function buildBody(discoverOnly: boolean): SearchRequest {
+function buildBody(discoverOnly: boolean, includePreferenceFeedback = true): SearchRequest {
   return {
     query: discoverOnly ? "" : nlQuery.value,
     state: browseState.value.trim().toUpperCase(),
@@ -132,8 +144,13 @@ function buildBody(discoverOnly: boolean): SearchRequest {
     w_price: wPrice.value,
     w_distance: wDistance.value,
     w_popularity: wPopularity.value,
-    liked_business_ids: [...likedIds.value],
-    disliked_business_ids: [...dislikedIds.value],
+    liked_business_ids: includePreferenceFeedback ? [...likedIds.value] : [],
+    disliked_business_ids: includePreferenceFeedback ? [...dislikedIds.value] : [],
+    rl_enabled: true,
+    rl_user_overrode: rlUserOverrideActive.value,
+    rl_prev_selected_arm: rlPrevSelectedArm.value,
+    rl_prev_intent_name: rlPrevIntentName.value,
+    rl_action_events: [...pendingRlEvents.value],
   };
 }
 
@@ -153,12 +170,62 @@ async function run(body: SearchRequest) {
   loading.value = true;
   try {
     data.value = await postSearch(body);
+    const meta = data.value.meta as Record<string, unknown>;
+    pendingRlEvents.value = [];
     forceRebuild.value = false;
+    rlPrevSelectedArm.value =
+      typeof meta.rl_selected_arm === "string" ? meta.rl_selected_arm : null;
+    rlPrevIntentName.value =
+      typeof meta.rl_intent_name === "string" ? meta.rl_intent_name : null;
+    rlLastQueryText.value = typeof meta.query_text === "string" ? meta.query_text : "";
+    rlLastApplied.value = meta.rl_applied === true;
+    rlUserOverrideActive.value = meta.rl_user_override_active === true;
+
+    // When RL owns the ranking round, mirror the chosen preset back into the sliders.
+    const weights = meta.rl_effective_weights;
+    if (
+      rlLastApplied.value &&
+      weights &&
+      typeof weights === "object" &&
+      !Array.isArray(weights)
+    ) {
+      const record = weights as Record<string, unknown>;
+      if (typeof record.w_semantic === "number") wSemantic.value = record.w_semantic;
+      if (typeof record.w_rating === "number") wRating.value = record.w_rating;
+      if (typeof record.w_price === "number") wPrice.value = record.w_price;
+      if (typeof record.w_distance === "number") wDistance.value = record.w_distance;
+      if (typeof record.w_popularity === "number") wPopularity.value = record.w_popularity;
+    }
   } catch (e) {
     err.value = e instanceof Error ? e.message : String(e);
   } finally {
     loading.value = false;
   }
+}
+
+function queueRlEvent(action: SearchActionEvent["action"], businessId?: string) {
+  if (
+    action === "slider_override" &&
+    pendingRlEvents.value.some((event) => event.action === "slider_override")
+  ) {
+    return;
+  }
+  pendingRlEvents.value = [
+    ...pendingRlEvents.value,
+    {
+      action,
+      business_id: businessId ?? null,
+      query_text: rlLastQueryText.value || resolvedQueryText.value || null,
+    },
+  ];
+}
+
+function onSliderManualInput() {
+  // The first manual slider move is the user's explicit opt-out from the RL preset.
+  if (!rlLastApplied.value || rlUserOverrideActive.value || !rlPrevSelectedArm.value) return;
+  rlUserOverrideActive.value = true;
+  rlLastApplied.value = false;
+  queueRlEvent("slider_override");
 }
 
 function toggleCuisine(c: string) {
@@ -231,6 +298,8 @@ function onGalleryImgErr(ev: Event) {
 
 function openDetail(row: Record<string, unknown>) {
   selectedDetail.value = row;
+  const bid = str(row, "business_id").trim();
+  if (bid) queueRlEvent("detail_open", bid);
 }
 
 function closeDetail() {
@@ -281,6 +350,7 @@ function toggleLike(bid: string) {
   } else {
     likedIds.value = [...likedIds.value, b];
     dislikedIds.value = dislikedIds.value.filter((x) => x !== b);
+    queueRlEvent("like", b);
   }
   void rerunFeedback();
 }
@@ -306,6 +376,15 @@ function feedbackLabel(bid: string): string {
 async function rerunFeedback() {
   if (!lastMode.value) return;
   await run(buildBody(lastMode.value === "discover"));
+}
+
+async function refreshResults() {
+  if (!lastMode.value) return;
+  queueRlEvent("refresh");
+  rlUserOverrideActive.value = false;
+  rlLastApplied.value = false;
+  // Refresh asks RL for a new starting strategy, so skip the current v2 like/dislike rerank.
+  await run(buildBody(lastMode.value === "discover", false));
 }
 
 function resetFeedback() {
@@ -417,35 +496,70 @@ function resetFeedback() {
               <span>w_semantic 文本</span>
               <span class="rng-v">{{ wSemantic.toFixed(2) }}</span>
             </div>
-            <input v-model.number="wSemantic" type="range" min="0" max="2" step="0.05" />
+            <input
+              v-model.number="wSemantic"
+              type="range"
+              min="0"
+              max="2"
+              step="0.05"
+              @input="onSliderManualInput"
+            />
           </div>
           <div class="rng">
             <div class="rng-h">
               <span>w_rating 星级</span>
               <span class="rng-v">{{ wRating.toFixed(2) }}</span>
             </div>
-            <input v-model.number="wRating" type="range" min="0" max="2" step="0.05" />
+            <input
+              v-model.number="wRating"
+              type="range"
+              min="0"
+              max="2"
+              step="0.05"
+              @input="onSliderManualInput"
+            />
           </div>
           <div class="rng">
             <div class="rng-h">
               <span>w_price 价格</span>
               <span class="rng-v">{{ wPrice.toFixed(2) }}</span>
             </div>
-            <input v-model.number="wPrice" type="range" min="0" max="2" step="0.05" />
+            <input
+              v-model.number="wPrice"
+              type="range"
+              min="0"
+              max="2"
+              step="0.05"
+              @input="onSliderManualInput"
+            />
           </div>
           <div class="rng">
             <div class="rng-h">
               <span>w_distance 距离</span>
               <span class="rng-v">{{ wDistance.toFixed(2) }}</span>
             </div>
-            <input v-model.number="wDistance" type="range" min="0" max="2" step="0.05" />
+            <input
+              v-model.number="wDistance"
+              type="range"
+              min="0"
+              max="2"
+              step="0.05"
+              @input="onSliderManualInput"
+            />
           </div>
           <div class="rng">
             <div class="rng-h">
               <span>w_popularity 热度</span>
               <span class="rng-v">{{ wPopularity.toFixed(2) }}</span>
             </div>
-            <input v-model.number="wPopularity" type="range" min="0" max="2" step="0.05" />
+            <input
+              v-model.number="wPopularity"
+              type="range"
+              min="0"
+              max="2"
+              step="0.05"
+              @input="onSliderManualInput"
+            />
           </div>
 
           <h3 class="h3 mt1">v2 候选池</h3>
@@ -486,12 +600,18 @@ function resetFeedback() {
         <div class="results-head">
           <h2>推荐结果</h2>
           <p class="sub">{{ metaPool }}</p>
+          <p v-if="rlBadgeText" class="rl-badge">{{ rlBadgeText }}</p>
           <details v-if="metaParsed" class="json-details">
             <summary>规则解析</summary>
             <pre class="json-pre">{{ JSON.stringify(metaParsed, null, 2) }}</pre>
             <p v-if="resolvedQueryText" class="qt">query_text: <code>{{ resolvedQueryText }}</code></p>
           </details>
-          <button type="button" class="btn-ghost" @click="resetFeedback">重置 👍/👎</button>
+          <div class="results-tools">
+            <button type="button" class="btn-ghost" :disabled="loading || !lastMode" @click="refreshResults">
+              刷新 RL 推荐
+            </button>
+            <button type="button" class="btn-ghost" @click="resetFeedback">重置 👍/👎</button>
+          </div>
         </div>
 
         <ul class="card-list">
@@ -944,6 +1064,21 @@ function resetFeedback() {
   color: var(--muted);
   font-size: 0.86rem;
 }
+.rl-badge {
+  margin: 0;
+  padding: 0.28rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.18);
+  border: 1px solid rgba(129, 140, 248, 0.3);
+  color: #c7d2fe;
+  font-size: 0.8rem;
+}
+.results-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-left: auto;
+}
 .json-details {
   flex-basis: 100%;
   margin-top: 0.25rem;
@@ -965,7 +1100,6 @@ function resetFeedback() {
   color: #cbd5e1;
 }
 .btn-ghost {
-  margin-left: auto;
   background: transparent;
   border: 1px dashed rgba(148, 163, 184, 0.35);
   color: var(--muted);
@@ -977,6 +1111,10 @@ function resetFeedback() {
 .btn-ghost:hover {
   border-color: var(--accent);
   color: #e2e8f0;
+}
+.btn-ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .card-list {
