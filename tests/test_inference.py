@@ -7,14 +7,22 @@ def run_simulation(city="Philadelphia"):
     print(f"--- MOCKING LIVE USER SELECTION ON FRONTEND ---")
     print(f"1. Loading reference data for {city} into server memory...")
 
-    repo = resolve_repo_root()
-    r = predict_merchant_site(
-        city=city,
-        lat=39.9526,
-        lon=-75.1652,
-        selected_category_columns=["cat_coffee_&_tea", "cat_fast_food"],
-        repo_root=repo,
-    )
+    # A user drops a pin via maps API for their new concept
+    if city.lower() == "philadelphia":
+        user_target_coord = (39.9526, -75.1652) # Central Philadelphia
+    elif city.lower() == "tucson":
+        user_target_coord = (32.2226, -110.9747) # Central Tucson
+    else:
+        user_target_coord = (39.9526, -75.1652) # Default
+    
+    # They specify it is a fast-food coffee shop
+    cat_cols = [c for c in local_ref.columns if c.startswith('cat_')]
+    user_target_categories = np.zeros(len(cat_cols))
+    
+    # We will simulate turning on a couple category tags manually
+    for idx, col in enumerate(cat_cols):
+        if col in ['cat_coffee_&_tea', 'cat_fast_food']:
+            user_target_categories[idx] = 1.0
 
     print(f"   Loaded {r.reference_row_count} local restaurants perfectly.")
     print(f"2. User placed pin on map at coordinates (39.9526, -75.1652)")
@@ -36,4 +44,4 @@ def run_simulation(city="Philadelphia"):
 
 
 if __name__ == "__main__":
-    run_simulation()
+    run_simulation(city="Tucson")
