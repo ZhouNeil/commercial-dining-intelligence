@@ -7,9 +7,36 @@ import type { components } from "./generated";
 export type HealthResponse = components["schemas"]["HealthResponse"];
 export type MerchantPredictRequest = components["schemas"]["MerchantPredictRequest"];
 export type MerchantPredictResponse = components["schemas"]["MerchantPredictResponse"];
-export type SearchRequest = components["schemas"]["SearchRequest"];
-export type SearchResponse = components["schemas"]["SearchResponse"];
 export type StatesResponse = components["schemas"]["StatesResponse"];
+type GeneratedSearchRequest = components["schemas"]["SearchRequest"];
+type GeneratedSearchResponse = components["schemas"]["SearchResponse"];
+
+export interface SearchActionEvent {
+  action: "detail_open" | "like" | "refresh" | "slider_override";
+  business_id?: string | null;
+  query_text?: string | null;
+}
+
+export type SearchRequest = GeneratedSearchRequest & {
+  rl_enabled?: boolean;
+  rl_user_overrode?: boolean;
+  rl_prev_selected_arm?: string | null;
+  rl_prev_intent_name?: string | null;
+  rl_action_events?: SearchActionEvent[];
+};
+
+export type SearchMeta = Record<string, unknown> & {
+  rl_applied?: boolean;
+  rl_intent_name?: string | null;
+  rl_selected_arm?: string | null;
+  rl_strategy_label?: string | null;
+  rl_effective_weights?: Record<string, number> | null;
+  rl_user_override_active?: boolean;
+};
+
+export type SearchResponse = Omit<GeneratedSearchResponse, "meta"> & {
+  meta: SearchMeta;
+};
 
 function apiBase(): string {
   const b = import.meta.env.VITE_API_BASE_URL;

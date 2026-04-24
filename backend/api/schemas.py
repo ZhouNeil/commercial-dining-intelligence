@@ -46,6 +46,12 @@ class StatesResponse(BaseModel):
     states: list[str]
 
 
+class SearchActionEvent(BaseModel):
+    action: str = Field(..., description="detail_open | like | refresh | slider_override")
+    business_id: Optional[str] = Field(None, description="相关商户 ID（如适用）")
+    query_text: Optional[str] = Field(None, description="触发该动作时的 query_text")
+
+
 class SearchRequest(BaseModel):
     """与前端 `/search`（Step1–2 与侧栏权重）对齐的检索请求字段。"""
 
@@ -76,6 +82,14 @@ class SearchRequest(BaseModel):
     w_popularity: float = Field(0.1, ge=0.0, le=2.0)
     liked_business_ids: list[str] = Field(default_factory=list)
     disliked_business_ids: list[str] = Field(default_factory=list)
+    rl_enabled: bool = Field(True, description="是否启用 RL 初始策略选择")
+    rl_user_overrode: bool = Field(False, description="用户是否手动接管了权重滑条")
+    rl_prev_selected_arm: Optional[str] = Field(None, description="上一次 RL 选中的 arm")
+    rl_prev_intent_name: Optional[str] = Field(None, description="上一次 RL 识别的 intent")
+    rl_action_events: list[SearchActionEvent] = Field(
+        default_factory=list,
+        description="自上次搜索以来的前端动作事件，用于 RL 反馈",
+    )
 
 
 class SearchResponse(BaseModel):

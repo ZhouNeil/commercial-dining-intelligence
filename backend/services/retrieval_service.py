@@ -14,6 +14,7 @@ import pandas as pd
 from dining_retrieval.core.retrieval import RestaurantSearchIndex, TouristRetrieval
 from dining_retrieval.recommendation.preference_state import UserPreferenceState
 from dining_retrieval.recommendation.reranker import rerank_pool
+from models.rl_feedback_loop import RLFeedbackLoop, classify_query_intent
 from dining_retrieval.core.yelp_photos import (
     load_business_photo_ids,
     resolve_photos_json,
@@ -87,6 +88,20 @@ def _df_to_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
     return out.to_dict(orient="records")
 
 
+def _strategy_label(arm_name: Optional[str], intent_name: Optional[str]) -> str:
+    if arm_name == "convenience":
+        return "Detected intent: Quick Meal. Prioritizing: Convenience."
+    if arm_name == "reputation":
+        return "Detected intent: Special Occasion. Prioritizing: Reputation."
+    if arm_name == "explorer":
+        return "Detected intent: Discovery. Prioritizing: Explorer picks."
+    if intent_name == "intent_quick":
+        return "Detected intent: Quick Meal. Manual weights active."
+    if intent_name == "intent_romantic":
+        return "Detected intent: Romantic Dining. Manual weights active."
+    return "Detected intent: General Search. Manual weights active."
+
+
 class RetrievalSearchService:
     def __init__(self, repo_root: Optional[Path] = None):
         # backend/services/... → 仓库根
@@ -101,9 +116,96 @@ class RetrievalSearchService:
         )
         self._index: Optional[RestaurantSearchIndex] = None
         self._photo_ids_by_business: Optional[dict[str, list[str]]] = None
+        self._rl_engine = self._create_rl_engine()
 
     _GALLERY_MAX = 8
     _FALLBACK_GALLERY = 4
+
+    # Keep presets centralized so RL can steer the same retrieval formula
+    # without changing the downstream TF-IDF or v2 reranker behavior.
+    _RL_WEIGHT_PRESETS: dict[str, dict[str, float]] = {
+        "explorer": {
+            "w_semantic": 1.35,
+            "w_rating": 0.65,
+            "w_price": 0.15,
+            "w_distance": 0.15,
+            "w_popularity": 0.2,
+        },
+        "reputation": {
+            "w_semantic": 0.75,
+            "w_rating": 1.45,
+            "w_price": 0.15,
+            "w_distance": 0.1,
+            "w_popularity": 0.3,
+        },
+        "convenience": {
+            "w_semantic": 0.7,
+            "w_rating": 0.85,
+            "w_price": 0.2,
+            "w_distance": 1.45,
+            "w_popularity": 0.15,
+        },
+    }
+
+    def _create_rl_engine(self) -> Optional[RLFeedbackLoop]:
+        try:
+            return RLFeedbackLoop()
+        except Exception:  # noqa: BLE001 - search should degrade gracefully if RL init fails.
+            return None
+
+    def _normalized_weights(
+        self,
+        *,
+        w_semantic: float,
+        w_rating: float,
+        w_price: float,
+        w_distance: float,
+        w_popularity: float,
+    ) -> dict[str, float]:
+        return {
+            "w_semantic": float(w_semantic),
+            "w_rating": float(w_rating),
+            "w_price": float(w_price),
+            "w_distance": float(w_distance),
+            "w_popularity": float(w_popularity),
+        }
+
+    def _preset_for_arm(self, arm_name: str) -> dict[str, float]:
+        return dict(self._RL_WEIGHT_PRESETS.get(arm_name, self._RL_WEIGHT_PRESETS["explorer"]))
+
+    def _reward_for_action(self, action_name: str) -> Optional[float]:
+        # Normalize the UI events into a tiny, explicit reward surface for v1 RL.
+        if action_name in {"detail_open", "like"}:
+            return 1.0
+        if action_name in {"refresh", "slider_override"}:
+            return -0.1
+        return None
+
+    def _log_rl_feedback(
+        self,
+        *,
+        rl_prev_selected_arm: Optional[str],
+        rl_prev_intent_name: Optional[str],
+        rl_action_events: Optional[List[Dict[str, Any]]],
+    ) -> int:
+        if self._rl_engine is None or not rl_prev_selected_arm or not rl_prev_intent_name:
+            return 0
+
+        logged = 0
+        for event in rl_action_events or []:
+            if not isinstance(event, dict):
+                continue
+            reward = self._reward_for_action(str(event.get("action") or "").strip())
+            if reward is None:
+                continue
+            self._rl_engine.log_user_feedback(
+                rl_prev_selected_arm,
+                reward,
+                rl_prev_intent_name,
+                query=str(event.get("query_text") or ""),
+            )
+            logged += 1
+        return logged
 
     def _business_photo_map(self) -> dict[str, list[str]]:
         if self._photo_ids_by_business is None:
@@ -172,6 +274,11 @@ class RetrievalSearchService:
         w_popularity: float = 0.1,
         liked_business_ids: Optional[List[str]] = None,
         disliked_business_ids: Optional[List[str]] = None,
+        rl_enabled: bool = True,
+        rl_user_overrode: bool = False,
+        rl_prev_selected_arm: Optional[str] = None,
+        rl_prev_intent_name: Optional[str] = None,
+        rl_action_events: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         对齐前端流程：Discover（泛检索）或 Refine（NL + 菜系 + 权重 + pool），
@@ -179,6 +286,16 @@ class RetrievalSearchService:
         """
         index = self.load_index(force_rebuild=force_rebuild_index)
         semantic_state_note = ""
+        rl_feedback_logged = 0
+        if rl_enabled:
+            try:
+                rl_feedback_logged = self._log_rl_feedback(
+                    rl_prev_selected_arm=rl_prev_selected_arm,
+                    rl_prev_intent_name=rl_prev_intent_name,
+                    rl_action_events=rl_action_events,
+                )
+            except Exception:  # noqa: BLE001 - RL feedback should never break search results.
+                rl_feedback_logged = 0
 
         if discover_only:
             parsed = ParsedQuery(raw="")
@@ -211,6 +328,31 @@ class RetrievalSearchService:
         city_f = city.strip() if city and str(city).strip() else None
         pk = int(pool_k) if pool_k is not None else 45
         pool_eff = max(int(top_k), pk)
+        user_weights = self._normalized_weights(
+            w_semantic=w_semantic,
+            w_rating=w_rating,
+            w_price=w_price,
+            w_distance=w_distance,
+            w_popularity=w_popularity,
+        )
+
+        rl_intent_name = classify_query_intent(query_text)
+        rl_selected_arm: Optional[str] = None
+        rl_applied = False
+        if rl_enabled and not rl_user_overrode and self._rl_engine is not None:
+            try:
+                rl_selected_arm = self._rl_engine.select_strategy(rl_intent_name)
+                effective_weights = self._preset_for_arm(rl_selected_arm)
+                rl_applied = True
+            except Exception:  # noqa: BLE001 - fall back to manual weights if RL selection fails.
+                effective_weights = user_weights
+                rl_selected_arm = None
+        else:
+            effective_weights = user_weights
+
+        # Once the user touches a slider, the manual request weights win for that round.
+        if rl_user_overrode:
+            effective_weights = user_weights
 
         pool_df = self._retrieval.recommend_keywords(
             keywords=query_text,
@@ -225,11 +367,11 @@ class RetrievalSearchService:
             ref_lat=parsed.ref_lat,
             ref_lon=parsed.ref_lon,
             max_radius_km=parsed.radius_km,
-            w_semantic=w_semantic,
-            w_rating=w_rating,
-            w_price=w_price,
-            w_distance=w_distance,
-            w_popularity=w_popularity,
+            w_semantic=effective_weights["w_semantic"],
+            w_rating=effective_weights["w_rating"],
+            w_price=effective_weights["w_price"],
+            w_distance=effective_weights["w_distance"],
+            w_popularity=effective_weights["w_popularity"],
         )
 
         likes = [str(x).strip() for x in (liked_business_ids or []) if str(x).strip()]
@@ -252,5 +394,12 @@ class RetrievalSearchService:
             "pool_k": pool_eff,
             "reranked": interactive_on,
             "semantic_state_note": semantic_state_note,
+            "rl_applied": rl_applied,
+            "rl_intent_name": rl_intent_name,
+            "rl_selected_arm": rl_selected_arm,
+            "rl_strategy_label": _strategy_label(rl_selected_arm, rl_intent_name),
+            "rl_effective_weights": effective_weights,
+            "rl_user_override_active": bool(rl_user_overrode),
+            "rl_feedback_logged": rl_feedback_logged,
         }
         return _df_to_records(result_df), meta
