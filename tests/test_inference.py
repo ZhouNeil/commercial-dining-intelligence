@@ -23,8 +23,12 @@ def run_simulation(city="Philadelphia"):
     print(f"   Loaded {len(local_ref)} local restaurants perfectly.")
 
     # A user drops a pin via maps API for their new concept
-    # Coordinates in central Philadelphia roughly
-    user_target_coord = (39.9526, -75.1652) 
+    if city.lower() == "philadelphia":
+        user_target_coord = (39.9526, -75.1652) # Central Philadelphia
+    elif city.lower() == "tucson":
+        user_target_coord = (32.2226, -110.9747) # Central Tucson
+    else:
+        user_target_coord = (39.9526, -75.1652) # Default
     
     # They specify it is a fast-food coffee shop
     cat_cols = [c for c in local_ref.columns if c.startswith('cat_')]
@@ -92,4 +96,4 @@ def run_simulation(city="Philadelphia"):
     print("-----------------------------------------------")
 
 if __name__ == "__main__":
-    run_simulation()
+    run_simulation(city="Tucson")
