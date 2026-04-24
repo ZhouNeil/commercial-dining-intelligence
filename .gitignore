@@ -242,10 +242,6 @@ data/saved_models/*
 # Ignore local environment variables or secrets
 .env
 
-<<<<<<< ethan_merchant
 train_spatial.csv
 test_spatial.csv
-=======
-# 根目录 npm 脚本 / frontend 依赖（勿提交 lock 与 node_modules 除非团队约定）
 node_modules/
->>>>>>> main
