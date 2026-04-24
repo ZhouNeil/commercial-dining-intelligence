@@ -110,6 +110,8 @@ export interface components {
              * @description 过滤参考商户；为空则取表头前 N 行
              */
             city?: string | null;
+            /** Optional USPS state for duplicate city names */
+            state?: string | null;
             /** Lat */
             lat: number;
             /** Lon */
@@ -143,6 +145,35 @@ export interface components {
             live_feature_preview?: {
                 [key: string]: number;
             };
+            /** Pin inside convex hull of reference training coordinates */
+            inside_reference_hull: boolean;
+        };
+        /** MerchantCoverageResponse */
+        MerchantCoverageResponse: {
+            city_filter?: string | null;
+            reference_count: number;
+            geo_count: number;
+            min_lon: number;
+            min_lat: number;
+            max_lon: number;
+            max_lat: number;
+            center_lon: number;
+            center_lat: number;
+            hull_geojson?: Record<string, unknown> | null;
+            sample_points_geojson?: Record<string, unknown> | null;
+            valid_hull: boolean;
+        };
+        /** MerchantCityRow */
+        MerchantCityRow: {
+            city: string;
+            state?: string;
+            row_count: number;
+            center_lat: number;
+            center_lon: number;
+        };
+        /** MerchantCitiesResponse */
+        MerchantCitiesResponse: {
+            cities: components["schemas"]["MerchantCityRow"][];
         };
         /**
          * SearchRequest

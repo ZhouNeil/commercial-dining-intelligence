@@ -24,6 +24,10 @@ class HealthResponse(BaseModel):
 
 class MerchantPredictRequest(BaseModel):
     city: Optional[str] = Field(None, description="过滤参考商户；为空则取表头前 N 行")
+    state: Optional[str] = Field(
+        None,
+        description="Optional USPS state to disambiguate duplicate city names (must match train_spatial.state).",
+    )
     lat: float
     lon: float
     category_keys: list[str] = Field(
@@ -33,6 +37,18 @@ class MerchantPredictRequest(BaseModel):
     max_rows_if_no_city: int = Field(2000, ge=100, le=50000)
 
 
+class MerchantCityRow(BaseModel):
+    city: str
+    state: str = ""
+    row_count: int
+    center_lat: float
+    center_lon: float
+
+
+class MerchantCitiesResponse(BaseModel):
+    cities: list[MerchantCityRow]
+
+
 class MerchantPredictResponse(BaseModel):
     survival_probability: float
     predicted_stars: float
@@ -40,6 +56,27 @@ class MerchantPredictResponse(BaseModel):
     city_filter: Optional[str] = None
     metrics: dict[str, float] = Field(default_factory=dict)
     live_feature_preview: dict[str, float] = Field(default_factory=dict)
+    inside_reference_hull: bool = Field(
+        ...,
+        description="True if the pin lies inside the convex hull of reference training coordinates for this slice.",
+    )
+
+
+class MerchantCoverageResponse(BaseModel):
+    """Map overlay: bbox, centroid, convex hull of reference rows, sampled training points."""
+
+    city_filter: Optional[str] = None
+    reference_count: int
+    geo_count: int
+    min_lon: float
+    min_lat: float
+    max_lon: float
+    max_lat: float
+    center_lon: float
+    center_lat: float
+    hull_geojson: Optional[dict[str, Any]] = None
+    sample_points_geojson: Optional[dict[str, Any]] = None
+    valid_hull: bool
 
 
 class StatesResponse(BaseModel):

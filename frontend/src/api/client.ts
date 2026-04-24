@@ -1,12 +1,15 @@
 /**
- * 与后端 JSON 契约一致的 fetch 封装（C2）。
- * 类型来自 `openapi.json` → `npm run gen:api` 生成的 `generated.d.ts`。
+ * Fetch helpers aligned with the backend JSON contract.
+ * Types are generated from `openapi.json` via `npm run gen:api` → `generated.d.ts`.
  */
 import type { components } from "./generated";
 
 export type HealthResponse = components["schemas"]["HealthResponse"];
 export type MerchantPredictRequest = components["schemas"]["MerchantPredictRequest"];
 export type MerchantPredictResponse = components["schemas"]["MerchantPredictResponse"];
+export type MerchantCoverageResponse = components["schemas"]["MerchantCoverageResponse"];
+export type MerchantCityRow = components["schemas"]["MerchantCityRow"];
+export type MerchantCitiesResponse = components["schemas"]["MerchantCitiesResponse"];
 export type StatesResponse = components["schemas"]["StatesResponse"];
 type GeneratedSearchRequest = components["schemas"]["SearchRequest"];
 type GeneratedSearchResponse = components["schemas"]["SearchResponse"];
@@ -83,6 +86,40 @@ export function postMerchantPredict(
   return json<MerchantPredictResponse>("/api/v1/merchant/predict", {
     method: "POST",
     body: JSON.stringify(body),
+  });
+}
+
+export function getMerchantCities(params?: { min_rows?: number }): Promise<MerchantCitiesResponse> {
+  const sp = new URLSearchParams();
+  if (params?.min_rows != null) {
+    sp.set("min_rows", String(params.min_rows));
+  }
+  const q = sp.toString();
+  return json<MerchantCitiesResponse>(`/api/v1/merchant/cities${q ? `?${q}` : ""}`, { method: "GET" });
+}
+
+export function getMerchantCoverage(params: {
+  city?: string | null;
+  state?: string | null;
+  max_rows_if_no_city?: number;
+  max_sample_points?: number;
+}): Promise<MerchantCoverageResponse> {
+  const sp = new URLSearchParams();
+  if (params.city != null && String(params.city).trim()) {
+    sp.set("city", String(params.city).trim());
+  }
+  if (params.state != null && String(params.state).trim()) {
+    sp.set("state", String(params.state).trim().toUpperCase());
+  }
+  if (params.max_rows_if_no_city != null) {
+    sp.set("max_rows_if_no_city", String(params.max_rows_if_no_city));
+  }
+  if (params.max_sample_points != null) {
+    sp.set("max_sample_points", String(params.max_sample_points));
+  }
+  const q = sp.toString();
+  return json<MerchantCoverageResponse>(`/api/v1/merchant/coverage${q ? `?${q}` : ""}`, {
+    method: "GET",
   });
 }
 

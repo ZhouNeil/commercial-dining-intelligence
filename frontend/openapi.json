@@ -61,6 +61,134 @@
         }
       }
     },
+    "/api/v1/merchant/cities": {
+      "get": {
+        "summary": "Merchant Cities",
+        "operationId": "merchant_cities_api_v1_merchant_cities_get",
+        "parameters": [
+          {
+            "name": "min_rows",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 1,
+              "default": 10,
+              "title": "Min Rows"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MerchantCitiesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/merchant/coverage": {
+      "get": {
+        "summary": "Merchant Coverage",
+        "operationId": "merchant_coverage_api_v1_merchant_coverage_get",
+        "parameters": [
+          {
+            "name": "city",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "City"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "name": "max_rows_if_no_city",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50000,
+              "minimum": 100,
+              "default": 2000,
+              "title": "Max Rows If No City"
+            }
+          },
+          {
+            "name": "max_sample_points",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 50,
+              "default": 400,
+              "title": "Max Sample Points"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MerchantCoverageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/states": {
       "get": {
         "summary": "List States",
@@ -195,6 +323,18 @@
             "title": "City",
             "description": "过滤参考商户；为空则取表头前 N 行"
           },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State",
+            "description": "Optional USPS state to disambiguate duplicate city names"
+          },
           "lat": {
             "type": "number",
             "title": "Lat"
@@ -265,15 +405,148 @@
             },
             "type": "object",
             "title": "Live Feature Preview"
+          },
+          "inside_reference_hull": {
+            "type": "boolean",
+            "title": "Inside Reference Hull"
           }
         },
         "type": "object",
         "required": [
           "survival_probability",
           "predicted_stars",
-          "reference_row_count"
+          "reference_row_count",
+          "inside_reference_hull"
         ],
         "title": "MerchantPredictResponse"
+      },
+      "MerchantCoverageResponse": {
+        "properties": {
+          "city_filter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City Filter"
+          },
+          "reference_count": {
+            "type": "integer",
+            "title": "Reference Count"
+          },
+          "geo_count": {
+            "type": "integer",
+            "title": "Geo Count"
+          },
+          "min_lon": {
+            "type": "number",
+            "title": "Min Lon"
+          },
+          "min_lat": {
+            "type": "number",
+            "title": "Min Lat"
+          },
+          "max_lon": {
+            "type": "number",
+            "title": "Max Lon"
+          },
+          "max_lat": {
+            "type": "number",
+            "title": "Max Lat"
+          },
+          "center_lon": {
+            "type": "number",
+            "title": "Center Lon"
+          },
+          "center_lat": {
+            "type": "number",
+            "title": "Center Lat"
+          },
+          "hull_geojson": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hull Geojson"
+          },
+          "sample_points_geojson": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Points Geojson"
+          },
+          "valid_hull": {
+            "type": "boolean",
+            "title": "Valid Hull"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reference_count",
+          "geo_count",
+          "min_lon",
+          "min_lat",
+          "max_lon",
+          "max_lat",
+          "center_lon",
+          "center_lat",
+          "valid_hull"
+        ],
+        "title": "MerchantCoverageResponse"
+      },
+      "MerchantCityRow": {
+        "properties": {
+          "city": {
+            "type": "string",
+            "title": "City"
+          },
+          "state": {
+            "type": "string",
+            "title": "State",
+            "default": ""
+          },
+          "row_count": {
+            "type": "integer",
+            "title": "Row Count"
+          },
+          "center_lat": {
+            "type": "number",
+            "title": "Center Lat"
+          },
+          "center_lon": {
+            "type": "number",
+            "title": "Center Lon"
+          }
+        },
+        "type": "object",
+        "required": ["city", "row_count", "center_lat", "center_lon"],
+        "title": "MerchantCityRow"
+      },
+      "MerchantCitiesResponse": {
+        "properties": {
+          "cities": {
+            "items": {
+              "$ref": "#/components/schemas/MerchantCityRow"
+            },
+            "type": "array",
+            "title": "Cities"
+          }
+        },
+        "type": "object",
+        "required": ["cities"],
+        "title": "MerchantCitiesResponse"
       },
       "SearchRequest": {
         "properties": {
