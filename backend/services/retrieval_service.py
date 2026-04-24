@@ -323,7 +323,7 @@ class RetrievalSearchService:
 
         st = str(state).strip().upper()
         if not st or st == "ALL":
-            raise ValueError("state 不能为空（请传 USPS 两字母州码，如 PA）。")
+            raise ValueError("state is required (USPS two-letter code, e.g. PA).")
 
         city_f = city.strip() if city and str(city).strip() else None
         pk = int(pool_k) if pool_k is not None else 45

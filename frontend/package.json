@@ -10,12 +10,15 @@
     "gen:api": "openapi-typescript ./openapi.json -o ./src/api/generated.d.ts"
   },
   "dependencies": {
+    "leaflet": "^1.9.4",
     "vue": "^3.4.21",
     "vue-router": "^4.3.0"
   },
   "devDependencies": {
-    "openapi-typescript": "^7.4.0",
+    "@types/geojson": "^7946.0.16",
+    "@types/leaflet": "^1.9.12",
     "@vitejs/plugin-vue": "^5.0.4",
+    "openapi-typescript": "^7.4.0",
     "typescript": "~5.4.0",
     "vite": "^5.2.0",
     "vue-tsc": "^2.0.6"

@@ -9,7 +9,7 @@ The `test_inference.py` script mimics a live scenario where a user drops a map p
 ### Prerequisites
 Because `test_inference.py` relies on the globally generated datasets and serialized `.pkl` models (which are stored locally and ignored by Git due to their size), you must ensure you have the following files locally on your machine before running the test:
 1. `train_spatial.csv` located in the parent directory of this repository (i.e. `../train_spatial.csv`)
-2. `global_survival_model.pkl` located in `models/artifacts/`
+2. `advanced_survival_classifier.pkl` located in `models/artifacts/`
 3. `global_rating_model.pkl` located in `models/artifacts/`
 
 ### Running the Test

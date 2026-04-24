@@ -10,11 +10,13 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.schemas import (
     HealthResponse,
+    MerchantCitiesResponse,
+    MerchantCoverageResponse,
     MerchantPredictRequest,
     MerchantPredictResponse,
     SearchRequest,
@@ -23,6 +25,8 @@ from api.schemas import (
 )
 from services.merchant_inference import (
     artifact_paths,
+    get_merchant_coverage,
+    list_merchant_spatial_cities,
     predict_merchant_site,
     spatial_train_csv_path,
 )
@@ -91,6 +95,7 @@ def merchant_predict(body: MerchantPredictRequest) -> MerchantPredictResponse:
     try:
         r = predict_merchant_site(
             city=body.city,
+            state=body.state,
             lat=body.lat,
             lon=body.lon,
             selected_category_columns=body.category_keys,
@@ -108,7 +113,39 @@ def merchant_predict(body: MerchantPredictRequest) -> MerchantPredictResponse:
         city_filter=r.city_filter,
         metrics=r.metrics,
         live_feature_preview=r.live_feature_preview,
+        inside_reference_hull=r.inside_reference_hull,
     )
+
+
+@app.get("/api/v1/merchant/cities", response_model=MerchantCitiesResponse)
+def merchant_cities(
+    min_rows: int = Query(10, ge=1, le=5000),
+) -> MerchantCitiesResponse:
+    try:
+        rows = list_merchant_spatial_cities(repo_root=_repo, min_rows=min_rows)
+    except FileNotFoundError as ex:
+        raise HTTPException(status_code=503, detail=str(ex)) from ex
+    return MerchantCitiesResponse(cities=rows)
+
+
+@app.get("/api/v1/merchant/coverage", response_model=MerchantCoverageResponse)
+def merchant_coverage(
+    city: Optional[str] = None,
+    state: Optional[str] = None,
+    max_rows_if_no_city: int = Query(2000, ge=100, le=50000),
+    max_sample_points: int = Query(400, ge=50, le=5000),
+) -> MerchantCoverageResponse:
+    try:
+        d = get_merchant_coverage(
+            city=city,
+            state=state,
+            repo_root=_repo,
+            max_rows_if_no_city=max_rows_if_no_city,
+            max_sample_points=max_sample_points,
+        )
+    except FileNotFoundError as ex:
+        raise HTTPException(status_code=503, detail=str(ex)) from ex
+    return MerchantCoverageResponse(**d)
 
 
 @app.get("/api/v1/states", response_model=StatesResponse)

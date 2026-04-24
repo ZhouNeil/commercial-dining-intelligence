@@ -48,7 +48,7 @@ const rlPrevIntentName = ref<string | null>(null);
 const rlLastQueryText = ref("");
 const rlLastApplied = ref(false);
 
-/** 可拖动侧栏宽度 */
+/** Resizable filter rail width (px) */
 const railW = ref(300);
 const railMin = 220;
 const railMax = 520;
@@ -75,7 +75,7 @@ const metaPool = computed(() => {
   const pr = m.pool_rows;
   const pk = m.pool_k;
   const rr = m.reranked;
-  return `候选池 ${pr} 行（内部 Top-${pk}）${rr ? " · 已 v2 重排" : ""}`;
+  return `Pool ${pr} rows (top ${pk} internally)${rr ? " · v2 re-ranked" : ""}`;
 });
 
 const rlBadgeText = computed(() => {
@@ -258,7 +258,7 @@ function fallbackPhotoUrl(businessId: string): string {
   return FALLBACK_PHOTOS[idx] ?? FALLBACK_PHOTOS[0];
 }
 
-/** 列表缩略 + 弹层画廊 */
+/** Thumbnail list + modal gallery */
 function photoUrls(row: Record<string, unknown>): string[] {
   const raw = row["photo_urls"];
   if (Array.isArray(raw) && raw.length) {
@@ -368,8 +368,8 @@ function toggleDislike(bid: string) {
 }
 
 function feedbackLabel(bid: string): string {
-  if (likedIds.value.includes(bid)) return "已标记 👍";
-  if (dislikedIds.value.includes(bid)) return "已标记 👎";
+  if (likedIds.value.includes(bid)) return "Liked";
+  if (dislikedIds.value.includes(bid)) return "Passed";
   return "";
 }
 
@@ -395,7 +395,7 @@ function resetFeedback() {
 </script>
 
 <template>
-  <div class="app">
+  <div class="search-layout">
     <button
       v-if="railCollapsed"
       type="button"
@@ -403,7 +403,7 @@ function resetFeedback() {
       @click="railCollapsed = false"
     >
       <span class="fab-icon">☰</span>
-      筛选与权重
+      Filters & ranking
     </button>
 
     <aside
@@ -414,13 +414,13 @@ function resetFeedback() {
     >
       <header class="rail-head">
         <div>
-          <p class="rail-eyebrow">检索参数</p>
-          <h2 class="rail-title">地点 · 偏好 · 排序</h2>
+          <p class="rail-eyebrow">Search controls</p>
+          <h2 class="rail-title">Location · taste · weights</h2>
         </div>
         <button
           type="button"
           class="rail-collapse"
-          title="收起侧栏"
+          title="Collapse sidebar"
           @click="railCollapsed = true"
         >
           ⟨
@@ -429,13 +429,13 @@ function resetFeedback() {
 
       <div class="rail-scroll">
         <section class="panel">
-          <h3 class="h3">Step 1 — 位置</h3>
-          <label class="lbl">州</label>
+          <h3 class="h3">Step 1 — Where</h3>
+          <label class="lbl">State</label>
           <select v-model="browseState" class="inp">
             <option v-for="s in states" :key="s" :value="s">{{ s }}</option>
           </select>
-          <label class="lbl">城市（可选，精确匹配）</label>
-          <input v-model="browseCity" class="inp" type="text" placeholder="例如 Philadelphia" />
+          <label class="lbl">City (optional, exact match)</label>
+          <input v-model="browseCity" class="inp" type="text" placeholder="e.g. Philadelphia" />
 
           <button
             type="button"
@@ -443,22 +443,22 @@ function resetFeedback() {
             :disabled="loading || !browseState"
             @click="runDiscover"
           >
-            发现附近餐厅
+            Browse top spots
           </button>
         </section>
 
         <section class="panel">
-          <h3 class="h3">Step 2 — 偏好与 NL</h3>
+          <h3 class="h3">Step 2 — Refine</h3>
           <details :open="step2Open" class="details">
-            <summary>自然语言、菜系、关键词</summary>
-            <label class="lbl">描述需求</label>
+            <summary>Natural language, cuisines, keywords</summary>
+            <label class="lbl">What are you in the mood for?</label>
             <textarea
               v-model="nlQuery"
               class="inp area"
               rows="3"
-              placeholder="例：便宜寿司、近 NYU、3 km 内"
+              placeholder="e.g. affordable sushi near NYU, within 3 km"
             />
-            <span class="lbl">菜系</span>
+            <span class="lbl">Cuisines</span>
             <div class="cuisine-grid">
               <label v-for="c in CUISINES" :key="c" class="cuisine"
                 ><input
@@ -469,9 +469,9 @@ function resetFeedback() {
                 {{ c }}</label
               >
             </div>
-            <label class="lbl">额外关键词</label>
+            <label class="lbl">Extra keywords</label>
             <input v-model="keywords" class="inp" type="text" />
-            <label class="lbl">结果条数 Top-K</label>
+            <label class="lbl">Results (top-K)</label>
             <input v-model.number="topK" class="inp narrow" type="number" min="3" max="30" />
           </details>
           <button
@@ -480,20 +480,22 @@ function resetFeedback() {
             :disabled="loading || !browseState"
             @click="runRefine"
           >
-            按偏好更新
+            Search with preferences
           </button>
         </section>
 
         <section class="panel panel-accent">
-          <h3 class="h3">排序权重</h3>
-          <p class="hint">与后端多因子 <code>final_score</code> 对应；可拖动右缘调整侧栏宽度。</p>
+          <h3 class="h3">Ranking weights</h3>
+          <p class="hint">
+            Maps to backend multi-signal <code>final_score</code>. Drag the gutter to resize this panel.
+          </p>
           <label class="chk"
-            ><input v-model="forceRebuild" type="checkbox" /> 强制重建 TF-IDF 索引</label
+            ><input v-model="forceRebuild" type="checkbox" /> Force rebuild TF-IDF index</label
           >
 
           <div class="rng">
             <div class="rng-h">
-              <span>w_semantic 文本</span>
+              <span>Semantic (text)</span>
               <span class="rng-v">{{ wSemantic.toFixed(2) }}</span>
             </div>
             <input
@@ -507,7 +509,7 @@ function resetFeedback() {
           </div>
           <div class="rng">
             <div class="rng-h">
-              <span>w_rating 星级</span>
+              <span>Rating (stars)</span>
               <span class="rng-v">{{ wRating.toFixed(2) }}</span>
             </div>
             <input
@@ -521,7 +523,7 @@ function resetFeedback() {
           </div>
           <div class="rng">
             <div class="rng-h">
-              <span>w_price 价格</span>
+              <span>Price fit</span>
               <span class="rng-v">{{ wPrice.toFixed(2) }}</span>
             </div>
             <input
@@ -535,7 +537,7 @@ function resetFeedback() {
           </div>
           <div class="rng">
             <div class="rng-h">
-              <span>w_distance 距离</span>
+              <span>Distance</span>
               <span class="rng-v">{{ wDistance.toFixed(2) }}</span>
             </div>
             <input
@@ -549,7 +551,7 @@ function resetFeedback() {
           </div>
           <div class="rng">
             <div class="rng-h">
-              <span>w_popularity 热度</span>
+              <span>Popularity</span>
               <span class="rng-v">{{ wPopularity.toFixed(2) }}</span>
             </div>
             <input
@@ -562,10 +564,10 @@ function resetFeedback() {
             />
           </div>
 
-          <h3 class="h3 mt1">v2 候选池</h3>
+          <h3 class="h3 mt1">Re-rank pool</h3>
           <div class="rng">
             <div class="rng-h">
-              <span>池大小（重排用）</span>
+              <span>Pool size (for likes / dislikes)</span>
               <span class="rng-v">{{ poolK }}</span>
             </div>
             <input v-model.number="poolK" type="range" min="15" max="120" step="5" />
@@ -577,41 +579,45 @@ function resetFeedback() {
     <div
       v-show="!railCollapsed"
       class="gutter"
-      title="拖动调整侧栏宽度"
+      title="Drag to resize sidebar"
       @mousedown="startRailDrag"
     />
 
-    <main class="main">
+    <main class="search-main">
       <nav class="back">
-        <router-link to="/" class="back-a">← 返回首页</router-link>
+        <router-link to="/" class="back-a">← Home</router-link>
       </nav>
 
       <header class="hero">
-        <h1 class="hero-title">Dining Intelligence</h1>
+        <p class="hero-kicker">Curated for your city</p>
+        <h1 class="hero-title">Find your next favorite</h1>
         <p class="hero-sub">
-          先选州/市做广泛发现，再用自然语言与菜系精化。侧栏可收起，点击卡片查看相册与详情。
+          Start with state and optional city, then refine with language and cuisines. Collapse the rail
+          for more space; tap a card for photos and details.
         </p>
-        <p v-if="loading" class="status-pill">检索中…</p>
+        <p v-if="loading" class="status-pill">Searching…</p>
       </header>
 
       <p v-if="err" class="err-banner">{{ err }}</p>
 
       <div v-if="data && data.results.length" class="results-wrap">
         <div class="results-head">
-          <h2>推荐结果</h2>
-          <p class="sub">{{ metaPool }}</p>
-          <p v-if="rlBadgeText" class="rl-badge">{{ rlBadgeText }}</p>
+          <div class="results-head-text">
+            <h2>Places for you</h2>
+            <p class="sub">{{ metaPool }}</p>
+            <p v-if="rlBadgeText" class="rl-badge">{{ rlBadgeText }}</p>
+          </div>
+          <div class="results-tools">
+            <button type="button" class="btn-ghost" :disabled="loading || !lastMode" @click="refreshResults">
+              New bandit draw
+            </button>
+            <button type="button" class="btn-ghost" @click="resetFeedback">Clear likes / passes</button>
+          </div>
           <details v-if="metaParsed" class="json-details">
-            <summary>规则解析</summary>
+            <summary>Parsed query</summary>
             <pre class="json-pre">{{ JSON.stringify(metaParsed, null, 2) }}</pre>
             <p v-if="resolvedQueryText" class="qt">query_text: <code>{{ resolvedQueryText }}</code></p>
           </details>
-          <div class="results-tools">
-            <button type="button" class="btn-ghost" :disabled="loading || !lastMode" @click="refreshResults">
-              刷新 RL 推荐
-            </button>
-            <button type="button" class="btn-ghost" @click="resetFeedback">重置 👍/👎</button>
-          </div>
         </div>
 
         <ul class="card-list">
@@ -632,16 +638,16 @@ function resetFeedback() {
                 referrerpolicy="no-referrer"
                 @error="onThumbErr($event, row as Record<string, unknown>)"
               />
+              <span class="r-rank">#{{ i + 1 }}</span>
             </div>
             <div class="r-body">
               <div class="r-top">
-                <span class="r-rank">#{{ i + 1 }}</span>
                 <h3 class="r-name">{{ str(row as Record<string, unknown>, "name") }}</h3>
                 <p class="r-meta">
                   {{ str(row as Record<string, unknown>, "city") }},
                   {{ str(row as Record<string, unknown>, "state") }}
-                  · {{ num(row as Record<string, unknown>, "stars")?.toFixed(1) ?? "—" }}★
-                  · {{ str(row as Record<string, unknown>, "review_count") }} 条评论
+                  · {{ num(row as Record<string, unknown>, "stars")?.toFixed(1) ?? "—" }} ★
+                  · {{ str(row as Record<string, unknown>, "review_count") }} reviews
                 </p>
                 <p class="r-dim">
                   {{ fmtPriceTier((row as Record<string, unknown>).price_tier) }} ·
@@ -656,22 +662,22 @@ function resetFeedback() {
               >
                 <button
                   type="button"
-                  class="fb"
+                  class="fb fb-like"
                   @click="toggleLike(str(row as Record<string, unknown>, 'business_id'))"
                 >
-                  👍
+                  Like
                 </button>
                 <button
                   type="button"
-                  class="fb"
+                  class="fb fb-pass"
                   @click="toggleDislike(str(row as Record<string, unknown>, 'business_id'))"
                 >
-                  👎
+                  Pass
                 </button>
                 <span v-if="feedbackLabel(str(row as Record<string, unknown>, 'business_id'))" class="fb-t">{{
                   feedbackLabel(str(row as Record<string, unknown>, "business_id"))
                 }}</span>
-                <span class="tap-hint">点卡片其他区域看相册</span>
+                <span class="tap-hint">Elsewhere on card opens gallery</span>
               </div>
               <div class="bar" @click.stop>
                 <div
@@ -684,9 +690,11 @@ function resetFeedback() {
         </ul>
       </div>
 
-      <p v-else-if="data" class="empty">暂无结果，请尝试更换州/市或放宽条件。</p>
+      <p v-else-if="data" class="empty">No venues match. Try another state or city, or relax filters.</p>
 
-      <p class="foot">TF-IDF 余弦 + 多因子重排，与 <code>recommend_keywords</code> 一致</p>
+      <p class="foot">
+        TF-IDF cosine similarity + multi-signal blend (<code>recommend_keywords</code>).
+      </p>
     </main>
 
     <Teleport to="body">
@@ -697,8 +705,8 @@ function resetFeedback() {
         @keydown.escape.prevent="closeDetail"
       >
         <div class="modal-back" @click="closeDetail" />
-        <div class="modal-box" role="dialog" aria-modal="true" aria-label="餐厅详情" @click.stop>
-          <button type="button" class="modal-x" aria-label="关闭" @click="closeDetail">×</button>
+        <div class="modal-box" role="dialog" aria-modal="true" aria-label="Restaurant details" @click.stop>
+          <button type="button" class="modal-x" aria-label="Close" @click="closeDetail">×</button>
           <h2 class="modal-title">{{ str(selectedDetail, "name") }}</h2>
           <p class="modal-sub">
             {{ str(selectedDetail, "address") }} · {{ str(selectedDetail, "city") }},
@@ -711,7 +719,7 @@ function resetFeedback() {
             <figure v-for="(u, gi) in photoUrls(selectedDetail)" :key="gi" class="g-fig">
               <img
                 :src="u"
-                :alt="`图 ${gi + 1}`"
+                :alt="`Photo ${gi + 1}`"
                 loading="lazy"
                 referrerpolicy="no-referrer"
                 @error="onGalleryImgErr"
@@ -719,8 +727,8 @@ function resetFeedback() {
             </figure>
           </div>
           <p class="modal-score">
-            <strong>{{ num(selectedDetail, "stars")?.toFixed(1) ?? "—" }}</strong> 星 ·
-            {{ str(selectedDetail, "review_count") }} 条评论 ·
+            <strong>{{ num(selectedDetail, "stars")?.toFixed(1) ?? "—" }}</strong> stars ·
+            {{ str(selectedDetail, "review_count") }} reviews ·
             {{ fmtPriceTier(selectedDetail["price_tier"]) }} · {{ distLabel(selectedDetail) }}
           </p>
           <div v-if="str(selectedDetail, 'business_id')" class="modal-actions">
@@ -729,14 +737,14 @@ function resetFeedback() {
               class="btn btn-primary"
               @click="toggleLike(str(selectedDetail, 'business_id'))"
             >
-              👍 Like
+              Like
             </button>
             <button
               type="button"
               class="btn btn-secondary"
               @click="toggleDislike(str(selectedDetail, 'business_id'))"
             >
-              👎 Dislike
+              Pass
             </button>
             <code class="bid">ID: {{ str(selectedDetail, "business_id") }}</code>
           </div>
@@ -747,43 +755,46 @@ function resetFeedback() {
 </template>
 
 <style scoped>
-.app {
-  --bg: #0b1220;
-  --panel: #111827;
-  --panel-2: #0f172a;
-  --border: rgba(148, 163, 184, 0.18);
-  --text: #e2e8f0;
-  --muted: #94a3b8;
-  --accent: #818cf8;
-  --accent-2: #6366f1;
-  min-height: 100vh;
+.search-layout {
+  --ink: #1c1917;
+  --muted: #78716c;
+  --line: #e7e5e4;
+  --panel: #ffffff;
+  --panel-2: #fafaf9;
+  --accent: #dc2626;
+  --accent-2: #b91c1c;
+  --accent-soft: #fef2f2;
+  --shadow: 0 4px 24px rgba(28, 25, 23, 0.08);
+  --shadow-lg: 0 20px 50px rgba(28, 25, 23, 0.12);
+  min-height: calc(100vh - 0px);
   display: flex;
-  background: linear-gradient(160deg, #0b1220 0%, #0f172a 45%, #111827 100%);
-  color: var(--text);
-  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  background: linear-gradient(180deg, #f5f5f4 0%, #fafaf9 40%, #ffffff 100%);
+  color: var(--ink);
+  font-family: "Plus Jakarta Sans", system-ui, sans-serif;
   font-size: 15px;
 }
 
 .fab-open {
   position: fixed;
-  z-index: 5;
-  left: 0.75rem;
-  top: 0.75rem;
+  z-index: 40;
+  left: 0.85rem;
+  top: 4.5rem;
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.55rem 0.9rem;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--text);
+  padding: 0.55rem 1rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
   border-radius: 999px;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
+  font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-lg);
 }
 .fab-icon {
   font-size: 1.1rem;
-  opacity: 0.9;
+  opacity: 0.85;
 }
 
 .rail {
@@ -792,11 +803,11 @@ function resetFeedback() {
   max-width: 520px;
   width: 300px;
   background: var(--panel);
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   z-index: 2;
-  box-shadow: 8px 0 40px rgba(0, 0, 0, 0.2);
+  box-shadow: 4px 0 32px rgba(28, 25, 23, 0.04);
 }
 .rail--drag {
   user-select: none;
@@ -806,89 +817,103 @@ function resetFeedback() {
   align-items: flex-start;
   justify-content: space-between;
   gap: 0.75rem;
-  padding: 1.1rem 1rem 0.75rem;
-  border-bottom: 1px solid var(--border);
+  padding: 1rem 1rem 0.85rem;
+  border-bottom: 1px solid var(--line);
   flex-shrink: 0;
+  background: linear-gradient(180deg, #fffefb 0%, #fff 100%);
 }
 .rail-eyebrow {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--muted);
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  color: #a8a29e;
   margin: 0 0 0.2rem;
 }
 .rail-title {
   margin: 0;
   font-size: 1.05rem;
-  font-weight: 700;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
 }
 .rail-collapse {
   flex-shrink: 0;
-  width: 2rem;
-  height: 2rem;
-  border: 1px solid var(--border);
-  background: var(--panel-2);
-  color: var(--muted);
-  border-radius: 8px;
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 1px solid var(--line);
+  background: #fafaf9;
+  color: #57534e;
+  border-radius: 10px;
   cursor: pointer;
   font-size: 1.1rem;
   line-height: 1;
+  transition: background 0.15s, border-color 0.15s;
+}
+.rail-collapse:hover {
+  background: var(--accent-soft);
+  border-color: #fecaca;
+  color: var(--accent-2);
 }
 .rail-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 0.75rem 0.9rem 1.5rem;
+  padding: 0.85rem 0.9rem 1.5rem;
   scrollbar-gutter: stable;
 }
 
 .gutter {
   width: 6px;
   flex: 0 0 6px;
-  background: linear-gradient(90deg, rgba(0, 0, 0, 0.15), transparent);
+  background: linear-gradient(90deg, rgba(231, 229, 228, 0.9), transparent);
   cursor: col-resize;
   z-index: 3;
 }
 .gutter:hover {
-  background: rgba(129, 140, 248, 0.3);
+  background: linear-gradient(90deg, rgba(248, 113, 113, 0.45), transparent);
 }
 
 .panel {
   background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 0.9rem 0.85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 0.95rem 0.9rem 1.05rem;
   margin-bottom: 0.85rem;
 }
 .panel-accent {
-  background: linear-gradient(145deg, #1a2040 0%, #111827 100%);
-  border-color: rgba(99, 102, 241, 0.25);
+  background: linear-gradient(160deg, #fffafa 0%, #fafaf9 100%);
+  border-color: #fecaca;
 }
 .h3 {
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--accent);
-  margin: 0 0 0.6rem;
+  letter-spacing: 0.08em;
+  font-weight: 800;
+  color: var(--accent-2);
+  margin: 0 0 0.55rem;
 }
 .lbl {
   display: block;
   font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--muted);
+  font-weight: 700;
+  color: #57534e;
   margin: 0.5rem 0 0.25rem;
 }
 .inp {
   width: 100%;
-  padding: 0.45rem 0.5rem;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: #0b0f1a;
-  color: var(--text);
+  padding: 0.5rem 0.6rem;
+  border-radius: 10px;
+  border: 1px solid #d6d3d1;
+  background: #fff;
+  color: var(--ink);
   font: inherit;
   box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 .inp:focus {
-  outline: 1px solid var(--accent-2);
+  outline: none;
+  border-color: #f87171;
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.22);
 }
 .area {
   min-height: 3.2rem;
@@ -900,16 +925,17 @@ function resetFeedback() {
 .cuisine-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem 0.5rem;
+  gap: 0.35rem 0.45rem;
   margin: 0.35rem 0 0.5rem;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
 }
 .cuisine {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: 0.3rem;
   cursor: pointer;
-  color: #cbd5e1;
+  color: #44403c;
+  font-weight: 500;
 }
 .details {
   margin-bottom: 0.65rem;
@@ -917,32 +943,45 @@ function resetFeedback() {
 .details summary {
   cursor: pointer;
   color: var(--muted);
-  font-size: 0.86rem;
-  margin-bottom: 0.4rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+  margin-bottom: 0.45rem;
 }
 
 .btn {
   width: 100%;
   margin-top: 0.65rem;
-  padding: 0.5rem 0.75rem;
+  padding: 0.55rem 0.85rem;
   border: none;
-  border-radius: 9px;
-  font-weight: 600;
+  border-radius: 999px;
+  font-weight: 700;
   cursor: pointer;
   font: inherit;
+  font-size: 0.875rem;
+  transition: transform 0.15s, box-shadow 0.15s;
 }
 .btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent-2) 0%, #4f46e5 100%);
+  background: linear-gradient(135deg, #b91c1c, #ef4444);
   color: #fff;
-  margin-top: 0.4rem;
+  margin-top: 0.45rem;
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.3);
+}
+.btn-primary:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(185, 28, 28, 0.38);
 }
 .btn-secondary {
-  background: #334155;
-  color: #f1f5f9;
+  background: #fff;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+.btn-secondary:not(:disabled):hover {
+  border-color: #d6d3d1;
+  background: #fafaf9;
 }
 .hint {
   color: var(--muted);
@@ -952,112 +991,129 @@ function resetFeedback() {
 }
 .hint code {
   font-size: 0.72rem;
-  color: #a5b4fc;
-  background: rgba(99, 102, 241, 0.1);
-  padding: 0.05em 0.2em;
-  border-radius: 3px;
+  color: #991b1b;
+  background: var(--accent-soft);
+  padding: 0.08em 0.28em;
+  border-radius: 4px;
 }
 .chk {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.45rem;
   margin: 0.4rem 0 0.75rem;
-  color: #cbd5e1;
+  color: #44403c;
   font-size: 0.82rem;
   cursor: pointer;
+  font-weight: 500;
 }
 .rng {
-  margin-bottom: 0.4rem;
+  margin-bottom: 0.45rem;
 }
 .rng input[type="range"] {
   width: 100%;
-  accent-color: var(--accent-2);
-  margin-top: 0.1rem;
+  accent-color: var(--accent);
+  margin-top: 0.12rem;
 }
 .rng-h {
   display: flex;
   justify-content: space-between;
   font-size: 0.72rem;
   color: var(--muted);
-}
-.rng-v {
-  color: #a5b4fc;
   font-weight: 600;
 }
+.rng-v {
+  color: var(--accent-2);
+  font-weight: 800;
+}
 .mt1 {
-  margin-top: 0.6rem;
+  margin-top: 0.65rem;
 }
 
-.main {
+.search-main {
   flex: 1 1 0;
   min-width: 0;
   align-self: stretch;
   width: 100%;
   max-width: none;
-  padding: 1.25rem 1.4rem 2.5rem;
+  padding: 1.35rem 1.5rem 2.75rem;
   box-sizing: border-box;
 }
 .back {
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.35rem;
 }
 .back-a {
-  color: #a5b4fc;
+  color: var(--accent);
   text-decoration: none;
-  font-size: 0.88rem;
+  font-size: 0.875rem;
+  font-weight: 700;
 }
 .back-a:hover {
   text-decoration: underline;
 }
 .hero {
-  margin-bottom: 1.25rem;
+  margin-bottom: 1.35rem;
+}
+.hero-kicker {
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #a8a29e;
 }
 .hero-title {
-  margin: 0.25rem 0 0.35rem;
-  font-size: 1.65rem;
+  margin: 0 0 0.45rem;
+  font-size: clamp(1.65rem, 3.5vw, 2.1rem);
   font-weight: 800;
-  letter-spacing: -0.02em;
-  background: linear-gradient(100deg, #e2e8f0, #a5b4fc);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+  color: var(--ink);
 }
 .hero-sub {
   color: var(--muted);
-  font-size: 0.92rem;
+  font-size: 0.95rem;
   line-height: 1.55;
   margin: 0 0 0.5rem;
-  max-width: 36rem;
+  max-width: 40rem;
 }
 .status-pill {
   display: inline-block;
-  margin: 0;
-  padding: 0.2rem 0.55rem;
-  background: rgba(99, 102, 241, 0.15);
-  color: #a5b4fc;
+  margin: 0.35rem 0 0;
+  padding: 0.28rem 0.75rem;
+  background: var(--accent-soft);
+  color: var(--accent-2);
   border-radius: 999px;
   font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .err-banner {
-  background: rgba(127, 29, 29, 0.3);
-  border: 1px solid rgba(248, 113, 113, 0.3);
-  color: #fecaca;
-  padding: 0.65rem 0.85rem;
-  border-radius: 10px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  padding: 0.65rem 0.9rem;
+  border-radius: 12px;
   margin: 0.5rem 0 1rem;
   font-size: 0.88rem;
+  font-weight: 500;
 }
 
 .results-head {
-  margin-bottom: 1rem;
+  margin-bottom: 1.25rem;
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.5rem 0.9rem;
+  align-items: flex-start;
+  gap: 0.75rem 1rem;
+}
+.results-head-text {
+  flex: 1;
+  min-width: 12rem;
 }
 .results-head h2 {
-  margin: 0;
-  font-size: 1.1rem;
+  margin: 0 0 0.35rem;
+  font-size: 1.2rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
 }
 .sub {
   margin: 0;
@@ -1065,52 +1121,56 @@ function resetFeedback() {
   font-size: 0.86rem;
 }
 .rl-badge {
-  margin: 0;
-  padding: 0.28rem 0.6rem;
+  margin: 0.5rem 0 0;
+  padding: 0.35rem 0.75rem;
   border-radius: 999px;
-  background: rgba(99, 102, 241, 0.18);
-  border: 1px solid rgba(129, 140, 248, 0.3);
-  color: #c7d2fe;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
   font-size: 0.8rem;
+  font-weight: 600;
+  display: inline-block;
 }
 .results-tools {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  margin-left: auto;
+  align-items: center;
 }
 .json-details {
   flex-basis: 100%;
-  margin-top: 0.25rem;
+  margin-top: 0.35rem;
   font-size: 0.8rem;
   color: var(--muted);
 }
 .json-pre {
-  background: #0b0f1a;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.5rem 0.6rem;
+  background: #1c1917;
+  color: #e7e5e4;
+  border-radius: 12px;
+  padding: 0.55rem 0.65rem;
   font-size: 0.7rem;
   max-height: 8rem;
   overflow: auto;
-  margin: 0.3rem 0 0.25rem;
+  margin: 0.35rem 0 0.25rem;
 }
 .qt {
   font-size: 0.8rem;
-  color: #cbd5e1;
+  color: #57534e;
 }
 .btn-ghost {
-  background: transparent;
-  border: 1px dashed rgba(148, 163, 184, 0.35);
-  color: var(--muted);
+  background: #fff;
+  border: 1px solid var(--line);
+  color: #57534e;
   font-size: 0.8rem;
-  border-radius: 6px;
-  padding: 0.25rem 0.5rem;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
   cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
 }
-.btn-ghost:hover {
-  border-color: var(--accent);
-  color: #e2e8f0;
+.btn-ghost:hover:not(:disabled) {
+  border-color: #fca5a5;
+  color: var(--accent-2);
 }
 .btn-ghost:disabled {
   opacity: 0.45;
@@ -1121,43 +1181,36 @@ function resetFeedback() {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.9rem;
-}
-@media (min-width: 900px) {
-  .card-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
-    gap: 0.9rem;
-    align-content: start;
-  }
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: 1.25rem;
+  align-content: start;
 }
 
 .r-card {
   display: flex;
-  gap: 0;
-  background: #111827;
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 20px;
   overflow: hidden;
   transition: box-shadow 0.2s, border-color 0.2s, transform 0.2s;
   cursor: pointer;
   outline: none;
+  box-shadow: var(--shadow);
 }
 .r-card:hover {
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
-  border-color: rgba(99, 102, 241, 0.35);
-  transform: translateY(-1px);
+  box-shadow: var(--shadow-lg);
+  border-color: #fecaca;
+  transform: translateY(-3px);
 }
 .r-card:focus-visible {
-  box-shadow: 0 0 0 2px #6366f1;
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.45);
 }
 .r-thumb {
-  flex: 0 0 132px;
-  min-height: 100px;
-  max-height: 150px;
-  background: #0b0f1a;
+  position: relative;
+  aspect-ratio: 16 / 10;
+  background: #f5f5f4;
   overflow: hidden;
 }
 .r-thumb img {
@@ -1166,91 +1219,101 @@ function resetFeedback() {
   object-fit: cover;
   display: block;
 }
+.r-rank {
+  position: absolute;
+  left: 0.65rem;
+  top: 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(28, 25, 23, 0.72);
+  backdrop-filter: blur(6px);
+  padding: 0.22rem 0.5rem;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+}
 .r-body {
   flex: 1;
   min-width: 0;
-  padding: 0.7rem 0.95rem 0.75rem;
+  padding: 0.95rem 1rem 1rem;
   display: flex;
   flex-direction: column;
 }
 .r-top {
   flex: 1;
 }
-.r-rank {
-  font-size: 0.72rem;
-  color: var(--accent);
-  font-weight: 700;
-  margin-right: 0.3rem;
-}
 .r-name {
-  display: inline;
-  font-size: 1.02rem;
-  font-weight: 700;
-  margin: 0;
-  color: #f8fafc;
+  font-size: 1.05rem;
+  font-weight: 800;
+  margin: 0 0 0.35rem;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+  line-height: 1.25;
 }
 .r-meta {
-  font-size: 0.8rem;
-  color: #cbd5e1;
-  margin: 0.2rem 0 0.15rem;
+  font-size: 0.82rem;
+  color: #57534e;
+  margin: 0 0 0.35rem;
+  line-height: 1.4;
 }
 .r-dim {
-  font-size: 0.76rem;
-  color: var(--muted);
-  margin: 0 0 0.35rem;
-  line-height: 1.35;
+  font-size: 0.74rem;
+  color: #a8a29e;
+  margin: 0 0 0.5rem;
+  line-height: 1.4;
   word-break: break-word;
 }
 .r-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.4rem 0.6rem;
-  margin-top: 0.15rem;
+  gap: 0.45rem 0.55rem;
+  margin-top: auto;
 }
 .fb {
-  padding: 0.2rem 0.45rem;
-  font-size: 0.8rem;
-  border: 1px solid var(--border);
-  background: #0b0f1a;
-  color: #e2e8f0;
-  border-radius: 6px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  border: 1px solid var(--line);
+  background: #fafaf9;
+  color: var(--ink);
+  border-radius: 999px;
   cursor: pointer;
   line-height: 1.2;
+  transition: background 0.15s, border-color 0.15s;
 }
-.fb:hover {
-  background: #1e293b;
+.fb-like:hover {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+.fb-pass:hover {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  color: #991b1b;
 }
 .fb-t {
   font-size: 0.72rem;
-  color: #a5b4fc;
+  font-weight: 700;
+  color: var(--accent-2);
 }
 .tap-hint {
-  font-size: 0.7rem;
-  color: #64748b;
-  margin-left: 0.15rem;
-}
-@media (max-width: 600px) {
-  .r-card {
-    flex-direction: column;
-  }
-  .r-thumb {
-    flex: none;
-    max-height: 200px;
-    min-height: 150px;
-  }
+  font-size: 0.68rem;
+  color: #a8a29e;
+  margin-left: 0.1rem;
+  flex-basis: 100%;
 }
 
 .bar {
   height: 4px;
-  background: #1e293b;
+  background: #e7e5e4;
   border-radius: 4px;
-  margin-top: 0.45rem;
+  margin-top: 0.65rem;
   overflow: hidden;
 }
 .bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #f59e0b, #fbbf24);
+  background: linear-gradient(90deg, #b91c1c, #f87171);
   border-radius: 4px;
   transition: width 0.25s ease;
 }
@@ -1258,20 +1321,24 @@ function resetFeedback() {
 .empty {
   color: var(--muted);
   text-align: center;
-  padding: 2.5rem 0.5rem;
+  padding: 2.75rem 1rem;
+  font-weight: 500;
 }
 .foot {
-  margin-top: 1.5rem;
-  color: #64748b;
+  margin-top: 2rem;
+  color: #a8a29e;
   font-size: 0.78rem;
-  max-width: 36rem;
+  max-width: 38rem;
+  line-height: 1.5;
 }
 .foot code {
   font-size: 0.72rem;
-  color: #a5b4fc;
+  color: #78716c;
+  background: #f5f5f4;
+  padding: 0.08em 0.25em;
+  border-radius: 4px;
 }
 
-/* modal */
 .modal-root {
   position: fixed;
   inset: 0;
@@ -1285,27 +1352,27 @@ function resetFeedback() {
 .modal-back {
   position: absolute;
   inset: 0;
-  background: rgba(2, 6, 23, 0.8);
-  backdrop-filter: blur(4px);
+  background: rgba(28, 25, 23, 0.55);
+  backdrop-filter: blur(6px);
 }
 .modal-box {
   position: relative;
   z-index: 1;
-  max-width: min(700px, 100%);
-  max-height: min(88vh, 100%);
+  max-width: min(720px, 100%);
+  max-height: min(90vh, 100%);
   overflow: auto;
   width: 100%;
-  background: #111827;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 1.35rem 1.25rem 1.1rem;
-  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.5);
-  animation: in 0.2s ease;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 1.35rem 1.25rem 1.15rem;
+  box-shadow: var(--shadow-lg);
+  animation: modalIn 0.22s ease;
 }
-@keyframes in {
+@keyframes modalIn {
   from {
     transform: scale(0.98);
-    opacity: 0.8;
+    opacity: 0.85;
   }
   to {
     transform: none;
@@ -1316,52 +1383,53 @@ function resetFeedback() {
   position: absolute;
   right: 0.65rem;
   top: 0.55rem;
-  width: 2.1rem;
-  height: 2.1rem;
-  border: none;
-  background: #1e293b;
-  color: #94a3b8;
-  border-radius: 8px;
-  font-size: 1.25rem;
+  width: 2.15rem;
+  height: 2.15rem;
+  border: 1px solid var(--line);
+  background: #fafaf9;
+  color: #57534e;
+  border-radius: 10px;
+  font-size: 1.2rem;
   line-height: 1;
   cursor: pointer;
 }
 .modal-x:hover {
-  background: #334155;
-  color: #e2e8f0;
+  background: #f5f5f4;
+  color: var(--ink);
 }
 .modal-title {
-  margin: 0 2.25rem 0.35rem 0;
+  margin: 0 2.5rem 0.4rem 0;
   font-size: 1.35rem;
   font-weight: 800;
   line-height: 1.2;
-  color: #f8fafc;
+  color: var(--ink);
+  letter-spacing: -0.02em;
 }
 .modal-sub,
 .modal-sub2 {
-  color: #94a3b8;
+  color: var(--muted);
   font-size: 0.9rem;
-  line-height: 1.4;
+  line-height: 1.45;
   margin: 0 0 0.3rem;
 }
 .modal-sub2 {
   font-size: 0.82rem;
-  margin-bottom: 0.85rem;
+  margin-bottom: 0.9rem;
   word-break: break-word;
 }
 .gallery {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 0.5rem;
+  gap: 0.55rem;
   margin: 0.2rem 0 1rem;
 }
 .g-fig {
   margin: 0;
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
   aspect-ratio: 4/3;
-  background: #0b0f1a;
-  border: 1px solid var(--border);
+  background: #f5f5f4;
+  border: 1px solid var(--line);
 }
 .g-fig img {
   width: 100%;
@@ -1371,24 +1439,28 @@ function resetFeedback() {
 }
 .modal-score {
   font-size: 0.9rem;
-  color: #cbd5e1;
-  margin: 0 0 0.8rem;
+  color: #57534e;
+  margin: 0 0 0.85rem;
+  font-weight: 500;
 }
 .modal-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem 0.6rem;
+  gap: 0.55rem 0.65rem;
 }
 .modal-actions .btn {
   width: auto;
   margin: 0;
-  padding: 0.4rem 0.85rem;
-  font-size: 0.88rem;
+  padding: 0.45rem 1rem;
+  font-size: 0.875rem;
+}
+.modal-actions .btn-primary {
+  margin: 0;
 }
 .bid {
   font-size: 0.72rem;
-  color: #64748b;
+  color: #a8a29e;
   word-break: break-all;
 }
 </style>
