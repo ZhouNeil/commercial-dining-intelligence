@@ -103,6 +103,129 @@
         }
       }
     },
+    "/api/v1/merchant/categories": {
+      "get": {
+        "summary": "Merchant Categories",
+        "operationId": "merchant_categories_api_v1_merchant_categories_get",
+        "parameters": [
+          {
+            "name": "city",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                { "type": "string" },
+                { "type": "null" }
+              ],
+              "title": "City"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                { "type": "string" },
+                { "type": "null" }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "name": "max_rows_if_no_city",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50000,
+              "minimum": 100,
+              "default": 2000,
+              "title": "Max Rows If No City"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MerchantCategoriesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/merchant/categories/resolve": {
+      "get": {
+        "summary": "Resolve merchant business type text to cat_* keys",
+        "operationId": "merchant_categories_resolve_api_v1_merchant_categories_resolve_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "minLength": 1, "maxLength": 500, "title": "Q" }
+          },
+          {
+            "name": "city",
+            "in": "query",
+            "required": false,
+            "schema": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "City" }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": { "anyOf": [{ "type": "string" }, { "type": "null" }], "title": "State" }
+          },
+          {
+            "name": "max_rows_if_no_city",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50000,
+              "minimum": 100,
+              "default": 2000,
+              "title": "Max Rows If No City"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MerchantCategoriesResponse" }
+              }
+            }
+          },
+          "400": { "description": "No category match" },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/merchant/coverage": {
       "get": {
         "summary": "Merchant Coverage",
@@ -349,7 +472,16 @@
             },
             "type": "array",
             "title": "Category Keys",
-            "description": "train_spatial 中的 cat_* 列名，如 cat_coffee_&_tea"
+            "default": [],
+            "description": "train_spatial cat_*; optional if category_query is set"
+          },
+          "category_query": {
+            "anyOf": [
+              { "type": "string" },
+              { "type": "null" }
+            ],
+            "title": "Category Query",
+            "description": "Plain text, e.g. 'burger, coffee' — server resolves to cat_* for the slice"
           },
           "max_rows_if_no_city": {
             "type": "integer",
@@ -362,13 +494,18 @@
         "type": "object",
         "required": [
           "lat",
-          "lon",
-          "category_keys"
+          "lon"
         ],
         "title": "MerchantPredictRequest"
       },
       "MerchantPredictResponse": {
         "properties": {
+          "resolved_category_keys": {
+            "items": { "type": "string" },
+            "type": "array",
+            "title": "Resolved Category Keys",
+            "default": []
+          },
           "survival_probability": {
             "type": "number",
             "title": "Survival Probability"
@@ -547,6 +684,18 @@
         "type": "object",
         "required": ["cities"],
         "title": "MerchantCitiesResponse"
+      },
+      "MerchantCategoriesResponse": {
+        "properties": {
+          "category_keys": {
+            "items": { "type": "string" },
+            "type": "array",
+            "title": "Category Keys"
+          }
+        },
+        "type": "object",
+        "required": ["category_keys"],
+        "title": "MerchantCategoriesResponse"
       },
       "SearchRequest": {
         "properties": {

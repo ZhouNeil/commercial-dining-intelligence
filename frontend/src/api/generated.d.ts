@@ -38,6 +38,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/merchant/cities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Merchant Cities */
+        get: operations["merchant_cities_api_v1_merchant_cities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/merchant/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Merchant Categories */
+        get: operations["merchant_categories_api_v1_merchant_categories_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/merchant/categories/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resolve merchant business type text to cat_* keys */
+        get: operations["merchant_categories_resolve_api_v1_merchant_categories_resolve_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/merchant/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Merchant Coverage */
+        get: operations["merchant_coverage_api_v1_merchant_coverage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/states": {
         parameters: {
             query?: never;
@@ -110,7 +178,10 @@ export interface components {
              * @description 过滤参考商户；为空则取表头前 N 行
              */
             city?: string | null;
-            /** Optional USPS state for duplicate city names */
+            /**
+             * State
+             * @description Optional USPS state to disambiguate duplicate city names
+             */
             state?: string | null;
             /** Lat */
             lat: number;
@@ -118,9 +189,15 @@ export interface components {
             lon: number;
             /**
              * Category Keys
-             * @description train_spatial 中的 cat_* 列名，如 cat_coffee_&_tea
+             * @description train_spatial cat_*; optional if category_query is set
+             * @default []
              */
             category_keys: string[];
+            /**
+             * Category Query
+             * @description Plain text, e.g. 'burger, coffee' — server resolves to cat_* for the slice
+             */
+            category_query?: string | null;
             /**
              * Max Rows If No City
              * @default 2000
@@ -129,6 +206,11 @@ export interface components {
         };
         /** MerchantPredictResponse */
         MerchantPredictResponse: {
+            /**
+             * Resolved Category Keys
+             * @default []
+             */
+            resolved_category_keys: string[];
             /** Survival Probability */
             survival_probability: number;
             /** Predicted Stars */
@@ -145,35 +227,61 @@ export interface components {
             live_feature_preview?: {
                 [key: string]: number;
             };
-            /** Pin inside convex hull of reference training coordinates */
+            /** Inside Reference Hull */
             inside_reference_hull: boolean;
         };
         /** MerchantCoverageResponse */
         MerchantCoverageResponse: {
+            /** City Filter */
             city_filter?: string | null;
+            /** Reference Count */
             reference_count: number;
+            /** Geo Count */
             geo_count: number;
+            /** Min Lon */
             min_lon: number;
+            /** Min Lat */
             min_lat: number;
+            /** Max Lon */
             max_lon: number;
+            /** Max Lat */
             max_lat: number;
+            /** Center Lon */
             center_lon: number;
+            /** Center Lat */
             center_lat: number;
-            hull_geojson?: Record<string, unknown> | null;
-            sample_points_geojson?: Record<string, unknown> | null;
+            /** Hull Geojson */
+            hull_geojson?: Record<string, never> | null;
+            /** Sample Points Geojson */
+            sample_points_geojson?: Record<string, never> | null;
+            /** Valid Hull */
             valid_hull: boolean;
         };
         /** MerchantCityRow */
         MerchantCityRow: {
+            /** City */
             city: string;
-            state?: string;
+            /**
+             * State
+             * @default
+             */
+            state: string;
+            /** Row Count */
             row_count: number;
+            /** Center Lat */
             center_lat: number;
+            /** Center Lon */
             center_lon: number;
         };
         /** MerchantCitiesResponse */
         MerchantCitiesResponse: {
+            /** Cities */
             cities: components["schemas"]["MerchantCityRow"][];
+        };
+        /** MerchantCategoriesResponse */
+        MerchantCategoriesResponse: {
+            /** Category Keys */
+            category_keys: string[];
         };
         /**
          * SearchRequest
@@ -335,6 +443,145 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MerchantPredictResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    merchant_cities_api_v1_merchant_cities_get: {
+        parameters: {
+            query?: {
+                min_rows?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MerchantCitiesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    merchant_categories_api_v1_merchant_categories_get: {
+        parameters: {
+            query?: {
+                city?: string | null;
+                state?: string | null;
+                max_rows_if_no_city?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MerchantCategoriesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    merchant_categories_resolve_api_v1_merchant_categories_resolve_get: {
+        parameters: {
+            query: {
+                q: string;
+                city?: string | null;
+                state?: string | null;
+                max_rows_if_no_city?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MerchantCategoriesResponse"];
+                };
+            };
+            /** @description No category match */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    merchant_coverage_api_v1_merchant_coverage_get: {
+        parameters: {
+            query?: {
+                city?: string | null;
+                state?: string | null;
+                max_rows_if_no_city?: number;
+                max_sample_points?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MerchantCoverageResponse"];
                 };
             };
             /** @description Validation Error */

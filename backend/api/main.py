@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.schemas import (
     HealthResponse,
+    MerchantCategoriesResponse,
     MerchantCitiesResponse,
     MerchantCoverageResponse,
     MerchantPredictRequest,
@@ -26,8 +27,11 @@ from api.schemas import (
 from services.merchant_inference import (
     artifact_paths,
     get_merchant_coverage,
+    list_merchant_category_keys,
     list_merchant_spatial_cities,
     predict_merchant_site,
+    resolve_merchant_category_text,
+    suggest_merchant_category_text,
     spatial_train_csv_path,
 )
 from services.retrieval_service import RetrievalSearchService
@@ -92,13 +96,49 @@ def health() -> HealthResponse:
 
 @app.post("/api/v1/merchant/predict", response_model=MerchantPredictResponse)
 def merchant_predict(body: MerchantPredictRequest) -> MerchantPredictResponse:
+    q = (body.category_query or "").strip()
+    if q:
+        try:
+            keys = resolve_merchant_category_text(
+                q,
+                city=body.city,
+                state=body.state.strip().upper() if body.state and str(body.state).strip() else None,
+                max_rows_if_no_city=body.max_rows_if_no_city,
+                repo_root=_repo,
+            )
+        except FileNotFoundError as ex:
+            raise HTTPException(status_code=503, detail=str(ex)) from ex
+        if not keys:
+            sugg = suggest_merchant_category_text(
+                q,
+                city=body.city,
+                state=body.state.strip().upper() if body.state and str(body.state).strip() else None,
+                max_rows_if_no_city=body.max_rows_if_no_city,
+                repo_root=_repo,
+                limit=8,
+            )
+            sugg_txt = ", ".join(sugg[:8]) if sugg else "pizza, fast food, coffee, burger"
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No training category match for this text and city slice. "
+                    f"Suggestions (cat_*): {sugg_txt}"
+                ),
+            )
+    else:
+        keys = list(body.category_keys)
+    if not keys:
+        raise HTTPException(
+            status_code=400,
+            detail="Send category_query (plain text) or non-empty category_keys.",
+        )
     try:
         r = predict_merchant_site(
             city=body.city,
             state=body.state,
             lat=body.lat,
             lon=body.lon,
-            selected_category_columns=body.category_keys,
+            selected_category_columns=keys,
             repo_root=_repo,
             max_rows_if_no_city=body.max_rows_if_no_city,
         )
@@ -114,6 +154,7 @@ def merchant_predict(body: MerchantPredictRequest) -> MerchantPredictResponse:
         metrics=r.metrics,
         live_feature_preview=r.live_feature_preview,
         inside_reference_hull=r.inside_reference_hull,
+        resolved_category_keys=keys,
     )
 
 
@@ -126,6 +167,67 @@ def merchant_cities(
     except FileNotFoundError as ex:
         raise HTTPException(status_code=503, detail=str(ex)) from ex
     return MerchantCitiesResponse(cities=rows)
+
+
+@app.get("/api/v1/merchant/categories", response_model=MerchantCategoriesResponse)
+def merchant_categories(
+    city: Optional[str] = None,
+    state: Optional[str] = None,
+    max_rows_if_no_city: int = Query(2000, ge=100, le=50000),
+) -> MerchantCategoriesResponse:
+    try:
+        keys = list_merchant_category_keys(
+            city=city,
+            state=state.strip().upper() if state and str(state).strip() else None,
+            max_rows_if_no_city=max_rows_if_no_city,
+            repo_root=_repo,
+        )
+    except FileNotFoundError as ex:
+        raise HTTPException(status_code=503, detail=str(ex)) from ex
+    return MerchantCategoriesResponse(category_keys=keys)
+
+
+@app.get("/api/v1/merchant/categories/resolve", response_model=MerchantCategoriesResponse)
+def merchant_categories_resolve(
+    q: str = Query(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Free text, e.g. 'burger', 'fast food, coffee' — matched to train_spatial cat_* in this city slice.",
+    ),
+    city: Optional[str] = None,
+    state: Optional[str] = None,
+    max_rows_if_no_city: int = Query(2000, ge=100, le=50000),
+) -> MerchantCategoriesResponse:
+    try:
+        st = state.strip().upper() if state and str(state).strip() else None
+        keys = resolve_merchant_category_text(
+            q,
+            city=city,
+            state=st,
+            max_rows_if_no_city=max_rows_if_no_city,
+            repo_root=_repo,
+        )
+    except FileNotFoundError as ex:
+        raise HTTPException(status_code=503, detail=str(ex)) from ex
+    if not keys:
+        sugg = suggest_merchant_category_text(
+            q,
+            city=city,
+            state=st,
+            max_rows_if_no_city=max_rows_if_no_city,
+            repo_root=_repo,
+            limit=8,
+        )
+        sugg_txt = ", ".join(sugg[:8]) if sugg else "pizza, fast food, coffee, burger"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No train_spatial category match for this text and city slice. "
+                f"Suggestions (cat_*): {sugg_txt}"
+            ),
+        )
+    return MerchantCategoriesResponse(category_keys=keys)
 
 
 @app.get("/api/v1/merchant/coverage", response_model=MerchantCoverageResponse)
