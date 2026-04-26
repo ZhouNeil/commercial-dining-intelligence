@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import type { GeoJsonObject } from "geojson";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {
+  getMerchantCities,
+  getMerchantCoverage,
   getStates,
   postSearch,
+  type MerchantCityRow,
   type SearchActionEvent,
   type SearchRequest,
   type SearchResponse,
@@ -21,8 +27,59 @@ const CUISINES = [
 const states = ref<string[]>([]);
 const browseState = ref("PA");
 const browseCity = ref("");
+const cityRows = ref<MerchantCityRow[]>([]);
+const citiesLoading = ref(false);
+
+// Tourist retrieval index is intentionally scoped to a small set of city/state combos.
+// Keep the UI city list aligned with backend `backend/dining_retrieval/core/index_cities.py`
+// to avoid "selectable but empty" cities.
+const TOURIST_INDEX_ALLOWED: ReadonlySet<string> = new Set([
+  "philadelphia|PA",
+  "tampa|FL",
+  "indianapolis|IN",
+  "tucson|AZ",
+  "nashville|TN",
+  "new orleans|LA",
+  "edmonton|AB",
+  "saint louis|MO",
+  "st. louis|MO",
+  "reno|NV",
+  "santa barbara|CA",
+  "boise|ID",
+]);
+
+function _ck(city: string, state: string): string {
+  return `${city.trim().toLowerCase()}|${state.trim().toUpperCase()}`;
+}
+
+function cleanCityRows(rows: MerchantCityRow[]): MerchantCityRow[] {
+  // Filter to allowed set and de-dupe by (city,state), keeping the row with max row_count.
+  const best = new Map<string, MerchantCityRow>();
+  for (const r of rows) {
+    const city = String(r.city ?? "").trim();
+    const state = String(r.state ?? "").trim().toUpperCase();
+    if (!city || !state) continue;
+    if (Number(r.row_count) <= 0) continue;
+    const key = _ck(city, state);
+    if (!TOURIST_INDEX_ALLOWED.has(key)) continue;
+    const prev = best.get(key);
+    if (!prev || Number(r.row_count) > Number(prev.row_count)) best.set(key, r);
+  }
+  return [...best.values()].sort((a, b) => {
+    const sc = String(a.state).localeCompare(String(b.state), "en", { sensitivity: "base" });
+    if (sc) return sc;
+    return String(a.city).localeCompare(String(b.city), "en", { sensitivity: "base" });
+  });
+}
+
+const citiesInState = computed(() => {
+  const st = browseState.value.trim().toUpperCase();
+  return cityRows.value
+    .filter((r) => (r.state ?? "").trim().toUpperCase() === st)
+    .slice()
+    .sort((a, b) => a.city.localeCompare(b.city, "en", { sensitivity: "base" }));
+});
 const nlQuery = ref("");
-const keywords = ref("");
 const selectedCuisines = ref<string[]>([]);
 const topK = ref(10);
 const poolK = ref(45);
@@ -59,6 +116,15 @@ let dragStartW = 0;
 
 const selectedDetail = ref<Record<string, unknown> | null>(null);
 
+const tourMapEl = ref<HTMLElement | null>(null);
+let lmap: L.Map | null = null;
+let coverageLayerGroup: L.LayerGroup | null = null;
+let resultMarkersLayer: L.LayerGroup | null = null;
+let overviewCityLayer: L.LayerGroup | null = null;
+const mapMode = ref<"overview" | "slice">("overview");
+const mapCoverageLoading = ref(false);
+const mapCoverageError = ref<string | null>(null);
+
 const resolvedQueryText = computed(() => {
   const m = data.value?.meta as Record<string, unknown> | undefined;
   return m && typeof m.query_text === "string" ? m.query_text : "";
@@ -82,6 +148,9 @@ const rlBadgeText = computed(() => {
   const m = data.value?.meta as Record<string, unknown> | undefined;
   return m && typeof m.rl_strategy_label === "string" ? m.rl_strategy_label : "";
 });
+
+/** Non-empty NL query uses backend text parsing only; cuisine checkboxes are disabled to avoid mixed signals. */
+const nlQueryLocksCuisines = computed(() => nlQuery.value.trim().length > 0);
 
 function startRailDrag(e: MouseEvent) {
   e.preventDefault();
@@ -112,18 +181,68 @@ function onGlobalKey(e: KeyboardEvent) {
 
 onMounted(async () => {
   window.addEventListener("keydown", onGlobalKey);
+  citiesLoading.value = true;
   try {
-    const r = await getStates();
-    states.value = r.states.length ? r.states : ["PA"];
-    if (!states.value.includes(browseState.value)) {
-      browseState.value = states.value[0] ?? "PA";
+    const [st, mc] = await Promise.allSettled([getStates(), getMerchantCities({ min_rows: 1 })]);
+    if (st.status === "fulfilled") {
+      const r = st.value;
+      states.value = r.states.length ? r.states : ["PA"];
+      if (!states.value.includes(browseState.value)) {
+        browseState.value = states.value[0] ?? "PA";
+      }
+    } else {
+      states.value = ["PA", "NJ", "NV"];
+    }
+    if (mc.status === "fulfilled") {
+      cityRows.value = cleanCityRows(mc.value.cities);
     }
   } catch {
     states.value = ["PA", "NJ", "NV"];
+  } finally {
+    citiesLoading.value = false;
+  }
+  await nextTick();
+  void initTouristMap();
+});
+
+watch(browseState, () => {
+  const valid = new Set(citiesInState.value.map((r) => r.city));
+  if (browseCity.value && !valid.has(browseCity.value)) {
+    browseCity.value = "";
   }
 });
 
+watch(
+  () => nlQuery.value,
+  (v) => {
+    if (v.trim()) {
+      selectedCuisines.value = [];
+    }
+  },
+);
+
+watch([browseState, browseCity], () => {
+  void nextTick(() => {
+    if (lmap) {
+      // Only switch out of the initial overview map once user picks a city
+      // (or once we've already entered slice mode).
+      if (browseCity.value.trim() || mapMode.value === "slice") {
+        void refreshTouristMapCoverage();
+      } else {
+        drawOverviewCityMarkers();
+      }
+    }
+  });
+});
+
+watch([railCollapsed, railW], () => {
+  void nextTick(() => {
+    lmap?.invalidateSize();
+  });
+});
+
 onUnmounted(() => {
+  destroyTouristMap();
   window.removeEventListener("keydown", onGlobalKey);
   endRailDrag();
 });
@@ -135,10 +254,11 @@ function buildBody(discoverOnly: boolean, includePreferenceFeedback = true): Sea
     city: browseCity.value.trim() || null,
     top_k: topK.value,
     pool_k: poolK.value,
-    keywords_extra: discoverOnly ? null : keywords.value.trim() || null,
+    keywords_extra: null,
     force_rebuild_index: forceRebuild.value,
     discover_only: discoverOnly,
-    cuisines: discoverOnly ? [] : [...selectedCuisines.value],
+    cuisines:
+      discoverOnly ? [] : nlQuery.value.trim() ? [] : [...selectedCuisines.value],
     w_semantic: wSemantic.value,
     w_rating: wRating.value,
     w_price: wPrice.value,
@@ -200,6 +320,11 @@ async function run(body: SearchRequest) {
     err.value = e instanceof Error ? e.message : String(e);
   } finally {
     loading.value = false;
+    void nextTick(() => {
+      if (lmap) {
+        drawTouristResultMarkers(true);
+      }
+    });
   }
 }
 
@@ -229,6 +354,7 @@ function onSliderManualInput() {
 }
 
 function toggleCuisine(c: string) {
+  if (nlQuery.value.trim()) return;
   const i = selectedCuisines.value.indexOf(c);
   if (i >= 0) selectedCuisines.value = selectedCuisines.value.filter((x) => x !== c);
   else selectedCuisines.value = [...selectedCuisines.value, c];
@@ -304,6 +430,242 @@ function openDetail(row: Record<string, unknown>) {
 
 function closeDetail() {
   selectedDetail.value = null;
+}
+
+function destroyTouristMap() {
+  if (lmap) {
+    lmap.remove();
+    lmap = null;
+  }
+  coverageLayerGroup = null;
+  resultMarkersLayer = null;
+  overviewCityLayer = null;
+}
+
+function drawOverviewCityMarkers() {
+  if (!lmap || !overviewCityLayer) return;
+  overviewCityLayer.clearLayers();
+  // Big dots for all cities that exist in train_spatial slice list.
+  for (const row of cityRows.value) {
+    const st = String(row.state ?? "").trim().toUpperCase();
+    const city = String(row.city ?? "").trim();
+    if (!st || !city) continue;
+    const ll: [number, number] = [Number(row.center_lat), Number(row.center_lon)];
+    if (!Number.isFinite(ll[0]) || !Number.isFinite(ll[1])) continue;
+    const mk = L.circleMarker(ll, {
+      radius: 9.5,
+      color: "#7c3aed",
+      weight: 2,
+      fillColor: "#a78bfa",
+      fillOpacity: 0.92,
+    });
+    mk.bindTooltip(`${city}, ${st}`, { direction: "top", opacity: 0.92 });
+    mk.on("click", () => {
+      // Clicking an overview dot jumps to that city slice.
+      browseState.value = st;
+      browseCity.value = city;
+      railCollapsed.value = false;
+      mapMode.value = "slice";
+      void nextTick(() => {
+        void refreshTouristMapCoverage();
+      });
+    });
+    mk.addTo(overviewCityLayer);
+  }
+}
+
+function firstPolygonRingLonLat(geo: unknown): [number, number][] | null {
+  const o = geo as {
+    type?: string;
+    coordinates?: number[][][];
+    geometry?: { type?: string; coordinates?: number[][][] };
+    features?: { geometry?: { coordinates?: number[][][] } }[];
+  };
+  if (o.type === "Feature" && o.geometry?.coordinates?.[0]) {
+    return o.geometry.coordinates[0] as [number, number][];
+  }
+  if (o.type === "FeatureCollection" && o.features?.[0]?.geometry?.coordinates?.[0]) {
+    return o.features[0].geometry!.coordinates[0] as [number, number][];
+  }
+  if (o.type === "Polygon" && o.coordinates?.[0]) {
+    return o.coordinates[0] as [number, number][];
+  }
+  return null;
+}
+
+function resultRowLatLng(row: Record<string, unknown>): [number, number] | null {
+  const lat = num(row, "latitude");
+  const lon = num(row, "longitude");
+  if (lat == null || lon == null) return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return [lat, lon];
+}
+
+function drawTouristResultMarkers(adjustViewToResults: boolean) {
+  if (!lmap || !resultMarkersLayer) return;
+  resultMarkersLayer.clearLayers();
+  const rows = data.value?.results;
+  if (!rows?.length) return;
+  rows.forEach((row, i) => {
+    const r = row as Record<string, unknown>;
+    const ll = resultRowLatLng(r);
+    if (!ll) return;
+    const primary = i === 0;
+    const mk = L.circleMarker(ll, {
+      radius: primary ? 11 : 7,
+      color: primary ? "#7f1d1d" : "#57534e",
+      weight: 2,
+      fillColor: primary ? "#ef4444" : "#e7e5e4",
+      fillOpacity: 0.95,
+    });
+    mk.bindPopup(
+      `<strong>#${i + 1}</strong> ${String(r["name"] ?? "Venue")}<br/><span style="color:#78716c;font-size:0.85em">Click for details</span>`,
+    );
+    mk.on("click", (ev) => {
+      L.DomEvent.stopPropagation(ev);
+      openDetail(r);
+    });
+    mk.addTo(resultMarkersLayer!);
+  });
+  if (!adjustViewToResults) return;
+  const withGeo = rows
+    .map((row) => resultRowLatLng(row as Record<string, unknown>))
+    .filter((x): x is [number, number] => x != null);
+  if (withGeo.length > 0) {
+    const b = L.latLngBounds(withGeo.map(([la, lo]) => L.latLng(la, lo)));
+    if (b.isValid()) {
+      lmap.fitBounds(b, { padding: [40, 40], maxZoom: 15, animate: true });
+    }
+  }
+}
+
+async function refreshTouristMapCoverage() {
+  if (!lmap || !coverageLayerGroup) return;
+  mapMode.value = "slice";
+  overviewCityLayer?.clearLayers();
+  mapCoverageLoading.value = true;
+  mapCoverageError.value = null;
+  coverageLayerGroup.clearLayers();
+  const st = browseState.value.trim().toUpperCase();
+  const city = browseCity.value.trim() || null;
+  try {
+    const cov = await getMerchantCoverage({
+      city,
+      state: st || null,
+      max_rows_if_no_city: 2000,
+      max_sample_points: 450,
+    });
+    if (cov.hull_geojson) {
+      const ring = firstPolygonRingLonLat(cov.hull_geojson);
+      if (ring && ring.length >= 3) {
+        const world: L.LatLngExpression[] = [
+          [86, -179.5],
+          [86, 179.5],
+          [-86, 179.5],
+          [-86, -179.5],
+          [86, -179.5],
+        ];
+        const hole: [number, number][] = ring.map((p) => [p[1], p[0]]);
+        const a = hole[0];
+        const b0 = hole[hole.length - 1];
+        if (a && b0 && (a[0] !== b0[0] || a[1] !== b0[1])) {
+          hole.push(a);
+        }
+        try {
+          const maskRings: L.LatLngExpression[][] = [world, hole];
+          L.polygon(maskRings, {
+            stroke: false,
+            fillColor: "#0c0a09",
+            fillOpacity: 0.38,
+            interactive: false,
+            pane: "overlayPane",
+          }).addTo(coverageLayerGroup!);
+        } catch {
+          /* mask optional */
+        }
+      }
+      L.geoJSON(cov.hull_geojson as unknown as GeoJsonObject, {
+        style: {
+          color: "#dc2626",
+          weight: 2.5,
+          fillColor: "#fecaca",
+          fillOpacity: 0.12,
+        },
+        interactive: false,
+      }).addTo(coverageLayerGroup!);
+    }
+    if (cov.sample_points_geojson) {
+      L.geoJSON(cov.sample_points_geojson as unknown as GeoJsonObject, {
+        interactive: false,
+        pointToLayer(_f, ll) {
+          return L.circleMarker(ll, {
+            radius: 2,
+            weight: 0,
+            fillColor: "#a8a29e",
+            fillOpacity: 0.35,
+            color: "#a8a29e",
+          });
+        },
+      }).addTo(coverageLayerGroup!);
+    }
+    if (
+      cov.geo_count > 0 &&
+      cov.max_lat > cov.min_lat &&
+      cov.max_lon > cov.min_lon &&
+      Number.isFinite(cov.min_lat) &&
+      Number.isFinite(cov.max_lat)
+    ) {
+      lmap.fitBounds(
+        [
+          [cov.min_lat, cov.min_lon],
+          [cov.max_lat, cov.max_lon],
+        ],
+        { padding: [36, 36], maxZoom: 13, animate: true },
+      );
+    } else {
+      const match = cityRows.value.find((r) => {
+        if ((r.state ?? "").trim().toUpperCase() !== st) return false;
+        if (city) return r.city === city;
+        return true;
+      });
+      if (match) {
+        lmap.setView([match.center_lat, match.center_lon], 8, { animate: true });
+      }
+    }
+  } catch (e) {
+    mapCoverageError.value = e instanceof Error ? e.message : String(e);
+    const row = cityRows.value.find((r) => {
+      if ((r.state ?? "").trim().toUpperCase() !== st) return false;
+      if (city) return r.city === city;
+      return true;
+    });
+    if (row) {
+      lmap.setView([row.center_lat, row.center_lon], 8, { animate: true });
+    }
+  } finally {
+    mapCoverageLoading.value = false;
+  }
+  drawTouristResultMarkers(false);
+}
+
+async function initTouristMap() {
+  await nextTick();
+  if (!tourMapEl.value) return;
+  destroyTouristMap();
+  lmap = L.map(tourMapEl.value, { preferCanvas: true, scrollWheelZoom: true });
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  }).addTo(lmap);
+  coverageLayerGroup = L.layerGroup().addTo(lmap);
+  resultMarkersLayer = L.layerGroup().addTo(lmap);
+  overviewCityLayer = L.layerGroup().addTo(lmap);
+
+  // Initial "max map" view: do NOT draw hull/mask or fitBounds.
+  mapMode.value = "overview";
+  lmap.setView([39.5, -98.35], 4, { animate: false }); // continental US-ish
+  drawOverviewCityMarkers();
+  lmap.invalidateSize();
 }
 
 function num(r: Record<string, unknown>, k: string): number | null {
@@ -434,8 +796,28 @@ function resetFeedback() {
           <select v-model="browseState" class="inp">
             <option v-for="s in states" :key="s" :value="s">{{ s }}</option>
           </select>
-          <label class="lbl">City (optional, exact match)</label>
-          <input v-model="browseCity" class="inp" type="text" placeholder="e.g. Philadelphia" />
+          <label class="lbl">City (optional, after state)</label>
+          <select
+            v-if="citiesInState.length > 0"
+            v-model="browseCity"
+            class="inp"
+            :disabled="citiesLoading"
+          >
+            <option value="">Entire State</option>
+            <option v-for="c in citiesInState" :key="c.state + '::' + c.city" :value="c.city">
+              {{ c.city }}
+            </option>
+          </select>
+          <input
+            v-else
+            v-model="browseCity"
+            class="inp"
+            type="text"
+            :disabled="citiesLoading"
+            :placeholder="
+              citiesLoading ? 'Loading…' : 'e.g. Philadelphia (no prebuilt list for this state)'
+            "
+          />
 
           <button
             type="button"
@@ -450,7 +832,7 @@ function resetFeedback() {
         <section class="panel">
           <h3 class="h3">Step 2 — Refine</h3>
           <details :open="step2Open" class="details">
-            <summary>Natural language, cuisines, keywords</summary>
+            <summary>Natural language, cuisines</summary>
             <label class="lbl">What are you in the mood for?</label>
             <textarea
               v-model="nlQuery"
@@ -459,18 +841,20 @@ function resetFeedback() {
               placeholder="e.g. affordable sushi near NYU, within 3 km"
             />
             <span class="lbl">Cuisines</span>
-            <div class="cuisine-grid">
+            <p v-if="nlQueryLocksCuisines" class="hint hint-cuisine-lock">
+              Clear the natural language field above to use cuisine checkboxes.
+            </p>
+            <div class="cuisine-grid" :class="{ 'cuisine-grid--locked': nlQueryLocksCuisines }">
               <label v-for="c in CUISINES" :key="c" class="cuisine"
                 ><input
                   type="checkbox"
+                  :disabled="loading || nlQueryLocksCuisines"
                   :checked="selectedCuisines.includes(c)"
                   @change="toggleCuisine(c)"
                 />
                 {{ c }}</label
               >
             </div>
-            <label class="lbl">Extra keywords</label>
-            <input v-model="keywords" class="inp" type="text" />
             <label class="lbl">Results (top-K)</label>
             <input v-model.number="topK" class="inp narrow" type="number" min="3" max="30" />
           </details>
@@ -597,6 +981,40 @@ function resetFeedback() {
         </p>
         <p v-if="loading" class="status-pill">Searching…</p>
       </header>
+
+      <section class="tour-map-block" aria-label="City and recommendations map">
+        <div class="tour-map-head">
+          <h2 class="tour-map-title">Map</h2>
+          <p v-if="mapCoverageLoading" class="tour-map-status">Loading area…</p>
+          <p v-else-if="mapCoverageError" class="tour-map-status tour-map-status-err">
+            {{ mapCoverageError }}
+          </p>
+        </div>
+        <p class="tour-map-legend">
+          <span class="tour-legend-swatch tour-legend-swatch--outer" />
+          Dark = outside training area
+          <span class="tour-legend-swatch tour-legend-swatch--city" />
+          City / state slice
+          <span class="tour-legend-swatch tour-legend-swatch--pin" />
+          Your picks
+        </p>
+        <div class="tour-map-shell">
+          <div
+            ref="tourMapEl"
+            class="tour-map-host"
+            role="application"
+            aria-label="Map: area highlight and result pins"
+          />
+        </div>
+        <p v-if="browseCity.trim()" class="tour-map-hint">
+          <strong>{{ browseState }}</strong> · <strong>{{ browseCity }}</strong> — view jumps here when
+          the location changes. Markers: latest search results (if any).
+        </p>
+        <p v-else class="tour-map-hint">
+          <strong>{{ browseState }}</strong> (whole state) — same as above. Run a search to see numbered
+          pins.
+        </p>
+      </section>
 
       <p v-if="err" class="err-banner">{{ err }}</p>
 
@@ -937,6 +1355,14 @@ function resetFeedback() {
   color: #44403c;
   font-weight: 500;
 }
+.cuisine-grid--locked .cuisine {
+  cursor: not-allowed;
+  color: #78716c;
+}
+.hint-cuisine-lock {
+  margin: 0.2rem 0 0.35rem;
+  font-size: 0.78rem;
+}
 .details {
   margin-bottom: 0.65rem;
 }
@@ -1085,6 +1511,93 @@ function resetFeedback() {
   border-radius: 999px;
   font-size: 0.78rem;
   font-weight: 700;
+}
+
+.tour-map-block {
+  margin: 0 0 1.25rem;
+  padding: 0.9rem 1rem 1rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+.tour-map-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.4rem;
+}
+.tour-map-title {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.tour-map-status {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+.tour-map-status-err {
+  color: #b91c1c;
+}
+.tour-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.85rem;
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  color: #78716c;
+  line-height: 1.3;
+}
+.tour-legend-swatch {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 2px;
+  vertical-align: -0.08em;
+  margin-right: 0.15rem;
+  border: 1px solid rgba(28, 25, 23, 0.15);
+}
+.tour-legend-swatch--outer {
+  background: rgba(12, 10, 9, 0.38);
+}
+.tour-legend-swatch--city {
+  background: #fecaca;
+  border-color: #dc2626;
+}
+.tour-legend-swatch--pin {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #ef4444;
+  border: 2px solid #7f1d1d;
+}
+.tour-map-shell {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #e7e5e4;
+  background: #f5f5f4;
+  min-height: 280px;
+  height: min(42vh, 420px);
+  max-height: 520px;
+}
+.tour-map-host {
+  width: 100%;
+  height: 100%;
+  min-height: 260px;
+}
+.tour-map-hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--muted);
 }
 
 .err-banner {

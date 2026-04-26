@@ -31,8 +31,12 @@ class MerchantPredictRequest(BaseModel):
     lat: float
     lon: float
     category_keys: list[str] = Field(
-        ...,
-        description="train_spatial 中的 cat_* 列名，如 cat_coffee_&_tea",
+        default_factory=list,
+        description="Explicit train_spatial cat_* columns. Optional if category_query is set.",
+    )
+    category_query: Optional[str] = Field(
+        None,
+        description="Plain text (e.g. 'fast food, coffee', 'burger'); server maps to cat_* in the current slice.",
     )
     max_rows_if_no_city: int = Field(2000, ge=100, le=50000)
 
@@ -49,6 +53,15 @@ class MerchantCitiesResponse(BaseModel):
     cities: list[MerchantCityRow]
 
 
+class MerchantCategoriesResponse(BaseModel):
+    """cat_* 列名：与当前 city/state/max_rows 切片下 predict 所用列一致。"""
+
+    category_keys: list[str] = Field(
+        default_factory=list,
+        description="train_spatial 中 cat_* 名；在该切片内至少出现一次（全零列已排除，除非全部为零）。",
+    )
+
+
 class MerchantPredictResponse(BaseModel):
     survival_probability: float
     predicted_stars: float
@@ -59,6 +72,10 @@ class MerchantPredictResponse(BaseModel):
     inside_reference_hull: bool = Field(
         ...,
         description="True if the pin lies inside the convex hull of reference training coordinates for this slice.",
+    )
+    resolved_category_keys: list[str] = Field(
+        default_factory=list,
+        description="cat_* columns used for this prediction (from category_query and/or category_keys).",
     )
 
 

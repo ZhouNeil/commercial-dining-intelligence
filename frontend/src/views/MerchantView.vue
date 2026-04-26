@@ -20,10 +20,12 @@ const city = ref("Philadelphia");
 const stateFilter = ref("");
 const lat = ref(39.9526);
 const lon = ref(-75.1652);
-/** Comma or newline separated cat_* column names */
-const categoriesText = ref("cat_coffee_&_tea, cat_fast_food");
 const maxRows = ref(2000);
+/** Free text → backend ``resolve_merchant_category_text`` → ``cat_*`` (Yelp one-hot style). */
+const businessTypeText = ref("fast food, coffee");
 const loading = ref(false);
+/** Map result panel visibility (toolbar popover removed; only this panel + close). */
+const resultDockOpen = ref(true);
 const coverageLoading = ref(false);
 const err = ref<string | null>(null);
 const result = ref<MerchantPredictResponse | null>(null);
@@ -32,53 +34,22 @@ const coverage = ref<MerchantCoverageResponse | null>(null);
 const cities = ref<MerchantCityRow[]>([]);
 const citySearch = ref("");
 
-/** Toolbar summary popover: closed by user until the next prediction. */
-const teaserPopoverDismissed = ref(false);
-const teaserMouseOver = ref(false);
-const teaserFocusInside = ref(false);
-
-const teaserPopoverVisible = computed(
-  () => !!result.value && !teaserPopoverDismissed.value && (teaserMouseOver.value || teaserFocusInside.value)
-);
-
-function onTeaserMouseEnter() {
-  teaserMouseOver.value = true;
-}
-
-function onTeaserMouseLeave(e: MouseEvent) {
-  const el = e.currentTarget as HTMLElement;
-  if (e.relatedTarget instanceof Node && el.contains(e.relatedTarget)) return;
-  teaserMouseOver.value = false;
-}
-
-function onTeaserFocusIn() {
-  teaserFocusInside.value = true;
-}
-
-function onTeaserFocusOut(e: FocusEvent) {
-  const el = e.currentTarget as HTMLElement;
-  if (e.relatedTarget instanceof Node && el.contains(e.relatedTarget)) return;
-  teaserFocusInside.value = false;
-}
-
-function dismissTeaserPopover() {
-  teaserPopoverDismissed.value = true;
-  teaserMouseOver.value = false;
-  teaserFocusInside.value = false;
-}
-
 const mapEl = ref<HTMLElement | null>(null);
 let map: L.Map | null = null;
 let hullLayer: L.Layer | null = null;
 let sampleLayer: L.Layer | null = null;
 let pinLayer: L.LayerGroup | null = null;
 
-const categoryKeys = computed(() =>
-  categoriesText.value
-    .split(/[\n,]+/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-);
+function formatCategoryLabel(col: string): string {
+  const s = col.startsWith("cat_") ? col.slice(4) : col;
+  return s.replace(/_/g, " ").replace(/\s+/g, " ").replace(/&/g, " & ");
+}
+
+const resolvedCategoryLine = computed(() => {
+  const keys = result.value?.resolved_category_keys;
+  if (!keys?.length) return null;
+  return keys.map((k) => formatCategoryLabel(k)).join(" · ");
+});
 
 const filteredCities = computed(() => {
   const q = citySearch.value.trim().toLowerCase();
@@ -227,8 +198,8 @@ async function initMap() {
 }
 
 function debouncedPredictFromMap() {
-  if (!categoryKeys.value.length) {
-    err.value = "Add at least one category column before clicking the map.";
+  if (!businessTypeText.value.trim()) {
+    err.value = "Enter a business type in the form (e.g. fast food, coffee), then click the map.";
     return;
   }
   if (debounceTimer) clearTimeout(debounceTimer);
@@ -239,9 +210,9 @@ function debouncedPredictFromMap() {
 
 async function run() {
   err.value = null;
-  const keys = categoryKeys.value;
-  if (!keys.length) {
-    err.value = "Enter at least one category column (e.g. cat_fast_food).";
+  const text = businessTypeText.value.trim();
+  if (!text) {
+    err.value = "Describe the business you plan to open (e.g. fast food, pizza, coffee).";
     return;
   }
   loading.value = true;
@@ -251,14 +222,20 @@ async function run() {
       state: stateParam(),
       lat: lat.value,
       lon: lon.value,
-      category_keys: keys,
+      category_query: text,
+      category_keys: [],
       max_rows_if_no_city: maxRows.value,
     });
+    resultDockOpen.value = true;
   } catch (e) {
     err.value = e instanceof Error ? e.message : String(e);
   } finally {
     loading.value = false;
   }
+}
+
+function closeResultDock() {
+  resultDockOpen.value = false;
 }
 
 async function refreshCoverage() {
@@ -326,13 +303,9 @@ watch(
   { deep: true }
 );
 
-watch(
-  result,
-  () => {
-    teaserPopoverDismissed.value = false;
-  },
-  { deep: true }
-);
+watch(result, () => {
+  if (result.value) resultDockOpen.value = true;
+});
 
 onMounted(async () => {
   try {
@@ -360,10 +333,10 @@ onBeforeUnmount(() => {
     <header class="head">
       <h1>Merchant site predictor</h1>
       <p class="muted">
-        Click the map to set a pin — same
-        <code>POST /api/v1/merchant/predict</code>. Red outline: convex hull of training coordinates for the
-        current city slice. Gray dots: sampled training locations. Use the city list to jump; URL updates as
-        <code>?city=…&amp;state=…</code> for sharing.
+        <strong>1)</strong> Enter a <strong>restaurant or venue type</strong> in plain language.
+        <strong>2)</strong> Choose an area in the city list (updates the map slice).
+        <strong>3)</strong> <strong>Click the map</strong> to place the pin — the model runs automatically.
+        Red outline: training hull; gray dots: sample points.
       </p>
     </header>
 
@@ -375,40 +348,27 @@ onBeforeUnmount(() => {
             {{ coverage.reference_count }} ref. rows · {{ coverage.geo_count }} with coords
             <template v-if="coverage.valid_hull"> · hull OK</template>
           </span>
-          <div
-            v-if="result"
-            class="result-teaser-wrap"
-            @mouseenter="onTeaserMouseEnter"
-            @mouseleave="onTeaserMouseLeave"
-            @focusin="onTeaserFocusIn"
-            @focusout="onTeaserFocusOut"
-          >
-            <span class="result-teaser pill muted-pill" tabindex="0">
-              Latest: {{ (result.survival_probability * 100).toFixed(1) }}% · ★ {{ result.predicted_stars.toFixed(2) }}
-            </span>
-            <div v-show="teaserPopoverVisible" class="result-popover" role="tooltip">
-              <button
-                type="button"
-                class="popover-close"
-                aria-label="Close summary popover"
-                @click.stop="dismissTeaserPopover"
-              >
-                ×
-              </button>
-              <div class="popover-stats">
-                <div><strong>Survival</strong> {{ (result.survival_probability * 100).toFixed(1) }}%</div>
-                <div><strong>Stars</strong> {{ result.predicted_stars.toFixed(2) }} / 5</div>
-                <div><strong>Ref. rows</strong> {{ result.reference_row_count }}</div>
-                <div><strong>In hull</strong> {{ result.inside_reference_hull ? "Yes" : "No" }}</div>
-              </div>
-            </div>
-          </div>
+          <span v-if="result" class="pill muted-pill result-inline-pill">
+            {{ (result.survival_probability * 100).toFixed(1) }}% · ★ {{ result.predicted_stars.toFixed(2) }}
+            <span v-if="resolvedCategoryLine" class="inline-muted">· {{ resolvedCategoryLine }}</span>
+          </span>
+          <button type="button" class="btn-ghost" :disabled="coverageLoading" @click="refreshCoverage">
+            Reload map
+          </button>
         </div>
+
+        <p class="map-lead">Click the map to set the site (prediction runs a moment after the click if a type is filled in).</p>
         <div class="map-wrap">
-          <div ref="mapEl" class="map-host" role="application" aria-label="Map: click to select location" />
-          <aside v-if="result" class="result-dock" aria-live="polite" aria-label="Prediction result">
+          <div ref="mapEl" class="map-host" role="application" aria-label="Map: click to set site" />
+          <aside
+            v-if="result && resultDockOpen"
+            class="result-dock"
+            aria-live="polite"
+            aria-label="Prediction result"
+          >
             <div class="result-dock-head">
               <span class="result-dock-title">Prediction</span>
+              <button type="button" class="dock-close" aria-label="Close result panel" @click="closeResultDock">×</button>
             </div>
             <div class="stats stats--dock">
               <p v-if="!result.inside_reference_hull" class="warn" role="status">
@@ -492,38 +452,23 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="form-card">
-          <label>City (filter reference businesses, optional)</label>
-          <input v-model="city" class="inp" type="text" placeholder="Philadelphia" />
-
-          <label>State (optional, disambiguate same city name)</label>
+        <div class="form-card form-card--minimal">
+          <p class="form-step">Restaurant type (only text field)</p>
+          <p class="form-hint">
+            The server matches this to Yelp-style training columns for the selected city (e.g. <strong>burger</strong>,
+            <strong>fast food</strong>, <strong>coffee</strong>). Use commas for several types. Then
+            <strong>click the map</strong> — no Run button.
+          </p>
           <input
-            v-model="stateFilter"
-            class="inp state-inp"
+            v-model="businessTypeText"
+            class="inp"
             type="text"
-            maxlength="2"
-            placeholder="PA"
-            autocapitalize="characters"
+            autocomplete="off"
+            placeholder="e.g. fast food, coffee"
+            aria-label="Restaurant or venue type"
+            @keydown.enter.prevent="void run()"
           />
-
-          <label>Latitude / longitude</label>
-          <div class="row">
-            <input v-model.number="lat" class="inp inp-coord" type="number" step="any" @input="updatePin" />
-            <input v-model.number="lon" class="inp inp-coord" type="number" step="any" @input="updatePin" />
-          </div>
-
-          <label>Category columns (<code>cat_*</code>, comma or newline)</label>
-          <textarea v-model="categoriesText" class="inp textarea-cats" rows="4" placeholder="cat_coffee_&_tea&#10;cat_fast_food" />
-
-          <label>Max reference rows when no city column</label>
-          <input v-model.number="maxRows" class="inp short" type="number" min="100" max="50000" />
-
-          <button type="button" class="submit" :disabled="loading" @click="run">
-            {{ loading ? "Running…" : "Run prediction" }}
-          </button>
-          <button type="button" class="btn-secondary" :disabled="coverageLoading" @click="refreshCoverage">
-            Reload map coverage
-          </button>
+          <p v-if="resolvedCategoryLine" class="resolved-line">Last run used: {{ resolvedCategoryLine }}</p>
         </div>
 
         <p v-if="err" class="err">{{ err }}</p>
@@ -603,8 +548,9 @@ onBeforeUnmount(() => {
   margin-bottom: 0.5rem;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
   align-items: center;
+  gap: 0.4rem 0.6rem;
+  width: 100%;
 }
 
 .pill {
@@ -665,7 +611,29 @@ onBeforeUnmount(() => {
 }
 
 .result-dock-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
   margin-bottom: 0.45rem;
+}
+
+.dock-close {
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: none;
+  border-radius: 8px;
+  background: #f5f5f4;
+  color: #57534e;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dock-close:hover {
+  background: #e7e5e4;
+  color: #1c1917;
 }
 
 .result-dock-title {
@@ -690,61 +658,45 @@ onBeforeUnmount(() => {
   margin: 0;
 }
 
-.result-teaser-wrap {
-  position: relative;
+.map-lead {
+  margin: 0.35rem 0 0.4rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: #57534e;
 }
 
-.result-teaser {
-  cursor: default;
-}
-
-.result-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 1200;
-  min-width: 11.5rem;
-  padding: 0.55rem 2.1rem 0.65rem 0.7rem;
-  box-sizing: border-box;
-  background: #fff;
-  border: 1px solid #e7e5e4;
-  border-radius: 12px;
-  font-size: 0.78rem;
-  line-height: 1.5;
-  color: #44403c;
-  box-shadow:
-    0 14px 40px rgba(28, 25, 23, 0.18),
-    0 4px 12px rgba(28, 25, 23, 0.1);
-}
-
-.popover-close {
-  position: absolute;
-  top: 0.3rem;
-  right: 0.3rem;
-  width: 1.65rem;
-  height: 1.65rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: none;
+.btn-ghost {
+  margin-left: auto;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid #d6d3d1;
   border-radius: 8px;
-  background: transparent;
-  color: #78716c;
-  font-size: 1.15rem;
-  line-height: 1;
+  background: #fff;
+  color: #44403c;
   cursor: pointer;
 }
 
-.popover-close:hover {
-  background: #f5f5f4;
-  color: #1c1917;
+.btn-ghost:hover:not(:disabled) {
+  border-color: #fca5a5;
+  color: #b91c1c;
 }
 
-.popover-stats strong {
-  color: #1c1917;
-  font-weight: 700;
-  margin-right: 0.25rem;
+.btn-ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.result-inline-pill {
+  max-width: min(22rem, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-inline-pill .inline-muted {
+  font-weight: 600;
+  color: #78716c;
 }
 
 .map-hint {
@@ -916,6 +868,42 @@ onBeforeUnmount(() => {
   overflow-x: hidden;
 }
 
+.form-card--minimal {
+  padding: 0.95rem 1rem 1.05rem;
+}
+
+.form-step {
+  margin: 0 0 0.15rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #78716c;
+}
+
+.form-step + .form-hint {
+  margin-top: 0;
+}
+
+.form-hint {
+  margin: 0 0 0.45rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: #a8a29e;
+}
+
+.form-step:not(:first-child) {
+  margin-top: 0.5rem;
+}
+
+.resolved-line {
+  margin: 0.1rem 0 0.35rem;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: #57534e;
+  font-style: italic;
+}
+
 .form-card label {
   font-weight: 700;
   font-size: 0.8rem;
@@ -961,12 +949,6 @@ onBeforeUnmount(() => {
 
 .inp-coord {
   font-size: 0.78rem;
-}
-
-.textarea-cats {
-  resize: vertical;
-  overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .short {

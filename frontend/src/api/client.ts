@@ -10,6 +10,7 @@ export type MerchantPredictResponse = components["schemas"]["MerchantPredictResp
 export type MerchantCoverageResponse = components["schemas"]["MerchantCoverageResponse"];
 export type MerchantCityRow = components["schemas"]["MerchantCityRow"];
 export type MerchantCitiesResponse = components["schemas"]["MerchantCitiesResponse"];
+export type MerchantCategoriesResponse = components["schemas"]["MerchantCategoriesResponse"];
 export type StatesResponse = components["schemas"]["StatesResponse"];
 type GeneratedSearchRequest = components["schemas"]["SearchRequest"];
 type GeneratedSearchResponse = components["schemas"]["SearchResponse"];
@@ -96,6 +97,46 @@ export function getMerchantCities(params?: { min_rows?: number }): Promise<Merch
   }
   const q = sp.toString();
   return json<MerchantCitiesResponse>(`/api/v1/merchant/cities${q ? `?${q}` : ""}`, { method: "GET" });
+}
+
+export function getMerchantCategories(params?: {
+  city?: string | null;
+  state?: string | null;
+  max_rows_if_no_city?: number;
+}): Promise<MerchantCategoriesResponse> {
+  const sp = new URLSearchParams();
+  if (params?.city != null && String(params.city).trim()) {
+    sp.set("city", String(params.city).trim());
+  }
+  if (params?.state != null && String(params.state).trim()) {
+    sp.set("state", String(params.state).trim().toUpperCase());
+  }
+  if (params?.max_rows_if_no_city != null) {
+    sp.set("max_rows_if_no_city", String(params.max_rows_if_no_city));
+  }
+  const q = sp.toString();
+  return json<MerchantCategoriesResponse>(`/api/v1/merchant/categories${q ? `?${q}` : ""}`, { method: "GET" });
+}
+
+/** Map free text (e.g. "burger", "fast food") to train_spatial ``cat_*`` for the current city slice. */
+export function getMerchantCategoryResolve(params: {
+  q: string;
+  city?: string | null;
+  state?: string | null;
+  max_rows_if_no_city?: number;
+}): Promise<MerchantCategoriesResponse> {
+  const sp = new URLSearchParams();
+  sp.set("q", params.q.trim());
+  if (params.city != null && String(params.city).trim()) {
+    sp.set("city", String(params.city).trim());
+  }
+  if (params.state != null && String(params.state).trim()) {
+    sp.set("state", String(params.state).trim().toUpperCase());
+  }
+  if (params.max_rows_if_no_city != null) {
+    sp.set("max_rows_if_no_city", String(params.max_rows_if_no_city));
+  }
+  return json<MerchantCategoriesResponse>(`/api/v1/merchant/categories/resolve?${sp.toString()}`, { method: "GET" });
 }
 
 export function getMerchantCoverage(params: {
