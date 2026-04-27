@@ -197,6 +197,7 @@ onMounted(async () => {
     if (mc.status === "fulfilled") {
       cityRows.value = cleanCityRows(mc.value.cities);
     }
+    browseCity.value = citiesInState.value[0]?.city ?? "";
   } catch {
     states.value = ["PA", "NJ", "NV"];
   } finally {
@@ -207,10 +208,7 @@ onMounted(async () => {
 });
 
 watch(browseState, () => {
-  const valid = new Set(citiesInState.value.map((r) => r.city));
-  if (browseCity.value && !valid.has(browseCity.value)) {
-    browseCity.value = "";
-  }
+  browseCity.value = citiesInState.value[0]?.city ?? "";
 });
 
 watch(
@@ -799,28 +797,8 @@ function resetFeedback() {
           <select v-model="browseState" class="inp">
             <option v-for="s in states" :key="s" :value="s">{{ s }}</option>
           </select>
-          <label class="lbl">City (optional, after state)</label>
-          <select
-            v-if="citiesInState.length > 0"
-            v-model="browseCity"
-            class="inp"
-            :disabled="citiesLoading"
-          >
-            <option value="">Entire State</option>
-            <option v-for="c in citiesInState" :key="c.state + '::' + c.city" :value="c.city">
-              {{ c.city }}
-            </option>
-          </select>
-          <input
-            v-else
-            v-model="browseCity"
-            class="inp"
-            type="text"
-            :disabled="citiesLoading"
-            :placeholder="
-              citiesLoading ? 'Loading…' : 'e.g. Philadelphia (no prebuilt list for this state)'
-            "
-          />
+          <label class="lbl">City</label>
+          <p class="inp inp--display">{{ browseCity || '—' }}</p>
 
           <label class="lbl">Current Location (for distance ranking)</label>
           <input
@@ -1344,6 +1322,12 @@ function resetFeedback() {
   outline: none;
   border-color: #f87171;
   box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.22);
+}
+.inp--display {
+  background: #f5f5f4;
+  color: #78716c;
+  cursor: default;
+  margin: 0;
 }
 .area {
   min-height: 3.2rem;
