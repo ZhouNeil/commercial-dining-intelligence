@@ -254,8 +254,18 @@ def merchant_coverage(
 def list_states() -> StatesResponse:
     from dining_retrieval.core.google_maps_loader import union_state_options
 
-    opts = union_state_options(_repo / "data" / "cleaned")
-    return StatesResponse(states=list(opts or []))
+    opts = set(union_state_options(_repo / "data" / "cleaned"))
+
+    # Filter to only states present in the built index — prevents showing states
+    # that would always return zero search results.
+    index_meta = _repo / "models" / "artifacts" / "meta.csv"
+    if index_meta.exists():
+        import pandas as pd
+        meta = pd.read_csv(index_meta, usecols=["state"], low_memory=False)
+        indexed = set(meta["state"].dropna().astype(str).str.strip().str.upper().unique())
+        opts = opts & indexed
+
+    return StatesResponse(states=sorted(opts))
 
 
 @app.post("/api/v1/search", response_model=SearchResponse)
