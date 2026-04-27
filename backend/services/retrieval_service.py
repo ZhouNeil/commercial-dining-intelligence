@@ -178,6 +178,8 @@ class RetrievalSearchService:
         # Normalize the UI events into a tiny, explicit reward surface for v1 RL.
         if action_name in {"detail_open", "like"}:
             return 1.0
+        if action_name == "pass":
+            return -0.5
         if action_name in {"refresh", "slider_override"}:
             return -0.1
         return None

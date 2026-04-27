@@ -16,7 +16,7 @@ type GeneratedSearchRequest = components["schemas"]["SearchRequest"];
 type GeneratedSearchResponse = components["schemas"]["SearchResponse"];
 
 export interface SearchActionEvent {
-  action: "detail_open" | "like" | "refresh" | "slider_override";
+  action: "detail_open" | "like" | "pass" | "refresh" | "slider_override";
   business_id?: string | null;
   query_text?: string | null;
 }

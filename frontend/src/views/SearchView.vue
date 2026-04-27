@@ -727,6 +727,7 @@ function toggleDislike(bid: string) {
   } else {
     dislikedIds.value = [...dislikedIds.value, b];
     likedIds.value = likedIds.value.filter((x) => x !== b);
+    queueRlEvent("pass", b);
   }
   void rerunFeedback();
 }

@@ -101,7 +101,7 @@ class StatesResponse(BaseModel):
 
 
 class SearchActionEvent(BaseModel):
-    action: str = Field(..., description="detail_open | like | refresh | slider_override")
+    action: str = Field(..., description="detail_open | like | pass | refresh | slider_override")
     business_id: Optional[str] = Field(None, description="相关商户 ID（如适用）")
     query_text: Optional[str] = Field(None, description="触发该动作时的 query_text")
 
