@@ -112,6 +112,7 @@ class SearchRequest(BaseModel):
     query: str = Field("", description="Step2 自然语言；discover_only 时可空")
     state: str = Field(..., description="USPS 州码")
     city: Optional[str] = Field(None, description="可选城市名（精确匹配）")
+    user_location: Optional[str] = Field(None, description="User's current location input for distance ranking")
     top_k: int = Field(10, ge=1, le=100)
     pool_k: Optional[int] = Field(
         None,

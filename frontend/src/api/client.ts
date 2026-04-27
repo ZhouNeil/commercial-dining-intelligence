@@ -22,6 +22,7 @@ export interface SearchActionEvent {
 }
 
 export type SearchRequest = GeneratedSearchRequest & {
+  user_location?: string | null;
   rl_enabled?: boolean;
   rl_user_overrode?: boolean;
   rl_prev_selected_arm?: string | null;
