@@ -21,6 +21,7 @@ from dining_retrieval.core.yelp_photos import (
     yelp_bphoto_cdn_url,
 )
 from dining_retrieval.search.query_parser import ParsedQuery, extract_budget_hint, parse_query
+from dining_retrieval.core.geocoder import geocode_address
 
 # 无 Yelp photo_id 时的占位图（与前端 @error 回退使用同一组，便于一致）
 _FALLBACK_FOOD_IMAGES: tuple[str, ...] = (
@@ -177,6 +178,8 @@ class RetrievalSearchService:
         # Normalize the UI events into a tiny, explicit reward surface for v1 RL.
         if action_name in {"detail_open", "like"}:
             return 1.0
+        if action_name == "pass":
+            return -0.5
         if action_name in {"refresh", "slider_override"}:
             return -0.1
         return None
@@ -261,6 +264,7 @@ class RetrievalSearchService:
         query: str = "",
         state: str,
         city: Optional[str] = None,
+        user_location: Optional[str] = None,
         top_k: int = 10,
         pool_k: Optional[int] = None,
         keywords_extra: Optional[str] = None,
@@ -320,6 +324,11 @@ class RetrievalSearchService:
             query_text = _compose_query_text(parsed, keywords_extra, effective_cuisines)
             if not query_text.strip():
                 query_text = (query or "").strip() or "restaurants"
+
+        if parsed.ref_lat is None and parsed.ref_lon is None and user_location and str(user_location).strip():
+            geo_res = geocode_address(str(user_location).strip())
+            if geo_res:
+                parsed = replace(parsed, ref_lat=geo_res[0], ref_lon=geo_res[1])
 
         st = str(state).strip().upper()
         if not st or st == "ALL":

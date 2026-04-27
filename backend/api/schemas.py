@@ -101,7 +101,7 @@ class StatesResponse(BaseModel):
 
 
 class SearchActionEvent(BaseModel):
-    action: str = Field(..., description="detail_open | like | refresh | slider_override")
+    action: str = Field(..., description="detail_open | like | pass | refresh | slider_override")
     business_id: Optional[str] = Field(None, description="相关商户 ID（如适用）")
     query_text: Optional[str] = Field(None, description="触发该动作时的 query_text")
 
@@ -112,6 +112,7 @@ class SearchRequest(BaseModel):
     query: str = Field("", description="Step2 自然语言；discover_only 时可空")
     state: str = Field(..., description="USPS 州码")
     city: Optional[str] = Field(None, description="可选城市名（精确匹配）")
+    user_location: Optional[str] = Field(None, description="User's current location input for distance ranking")
     top_k: int = Field(10, ge=1, le=100)
     pool_k: Optional[int] = Field(
         None,

@@ -80,6 +80,7 @@ const citiesInState = computed(() => {
     .sort((a, b) => a.city.localeCompare(b.city, "en", { sensitivity: "base" }));
 });
 const nlQuery = ref("");
+const userLocation = ref("");
 const selectedCuisines = ref<string[]>([]);
 const topK = ref(10);
 const poolK = ref(45);
@@ -252,6 +253,7 @@ function buildBody(discoverOnly: boolean, includePreferenceFeedback = true): Sea
     query: discoverOnly ? "" : nlQuery.value,
     state: browseState.value.trim().toUpperCase(),
     city: browseCity.value.trim() || null,
+    user_location: userLocation.value.trim() || null,
     top_k: topK.value,
     pool_k: poolK.value,
     keywords_extra: null,
@@ -725,6 +727,7 @@ function toggleDislike(bid: string) {
   } else {
     dislikedIds.value = [...dislikedIds.value, b];
     likedIds.value = likedIds.value.filter((x) => x !== b);
+    queueRlEvent("pass", b);
   }
   void rerunFeedback();
 }
@@ -817,6 +820,15 @@ function resetFeedback() {
             :placeholder="
               citiesLoading ? 'Loading…' : 'e.g. Philadelphia (no prebuilt list for this state)'
             "
+          />
+
+          <label class="lbl">Current Location (for distance ranking)</label>
+          <input
+            v-model="userLocation"
+            class="inp"
+            type="text"
+            placeholder="e.g. 21 Flushing Ave, Brooklyn, NY"
+            :disabled="loading"
           />
 
           <button

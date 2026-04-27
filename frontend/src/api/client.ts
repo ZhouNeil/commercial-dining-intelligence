@@ -16,12 +16,13 @@ type GeneratedSearchRequest = components["schemas"]["SearchRequest"];
 type GeneratedSearchResponse = components["schemas"]["SearchResponse"];
 
 export interface SearchActionEvent {
-  action: "detail_open" | "like" | "refresh" | "slider_override";
+  action: "detail_open" | "like" | "pass" | "refresh" | "slider_override";
   business_id?: string | null;
   query_text?: string | null;
 }
 
 export type SearchRequest = GeneratedSearchRequest & {
+  user_location?: string | null;
   rl_enabled?: boolean;
   rl_user_overrode?: boolean;
   rl_prev_selected_arm?: string | null;
