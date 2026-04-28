@@ -245,3 +245,6 @@ data/saved_models/*
 train_spatial.csv
 test_spatial.csv
 node_modules/
+
+# Legacy app/ directory (only contained __pycache__, replaced by backend/dining_retrieval/)
+app/
