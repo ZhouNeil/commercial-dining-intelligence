@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 从当前代码导出 OpenAPI JSON → frontend/openapi.json，再执行 frontend: npm run gen:api
+# Export OpenAPI JSON from code → frontend/openapi.json, then: npm run gen:api in frontend/
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONPATH="${ROOT}/backend:${ROOT}${PYTHONPATH:+:$PYTHONPATH}"

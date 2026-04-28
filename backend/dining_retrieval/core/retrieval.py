@@ -61,7 +61,7 @@ class TouristRetrieval:
         self.restrict_index_cities = restrict_index_cities
         self.rating_trust_ref_reviews = float(rating_trust_ref_reviews)
         # Bump this whenever retrieval/index-building logic changes meaningfully.
-        self.index_version = 5
+        self.index_version = 6
 
     @property
     def business_path(self) -> Path:
@@ -113,6 +113,87 @@ class TouristRetrieval:
         }
         return cfg != expected
 
+    @staticmethod
+    def _supplement_businesses_per_city(
+        business_full: pd.DataFrame,
+        business_selected: pd.DataFrame,
+        *,
+        min_per_city: int,
+        max_extra_rows: int,
+    ) -> pd.DataFrame:
+        """
+        Per-state top-by-reviews selection can starve small cities (e.g. Abington, PA): only a few rows in the index.
+        Within a budget, top up each (state, city) to at least min_per_city rows by city review count (still in business_full).
+        """
+        if business_full is None or business_full.empty:
+            return business_selected
+        need_cols = {"business_id", "state", "city", "review_count"}
+        if not need_cols.issubset(business_full.columns) or "business_id" not in business_selected.columns:
+            return business_selected
+        full = business_full
+        m = business_selected.copy()
+        m["state"] = m["state"].astype(str).str.strip().str.upper()
+        m["city_norm"] = m["city"].astype(str).str.strip().str.lower()
+        m_ids = set(m["business_id"].astype(str).tolist())
+        n_extra = 0
+        if min_per_city < 1:
+            return m.drop(columns=["city_norm"], errors="ignore")
+
+        full_w = full.copy()
+        full_w["state"] = full_w["state"].astype(str).str.strip().str.upper()
+        full_w["city_norm"] = full_w["city"].astype(str).str.strip().str.lower()
+        rc = pd.to_numeric(full_w["review_count"], errors="coerce").fillna(0.0)
+        full_w = full_w.assign(_rc=rc).sort_values("_rc", ascending=False)
+
+        # Prioritize cities that are partially indexed first, then fully missing ones (larger metros first to save budget)
+        def _ginfo(g: pd.DataFrame) -> tuple:
+            st = str(g["state"].iloc[0]).strip().upper()
+            cty = str(g["city_norm"].iloc[0])
+            n_in = len(
+                m[(m["state"] == st) & (m["city_norm"] == cty)]
+            ) if st and cty else 0
+            return (
+                0 if 0 < n_in < min_per_city else 1,
+                0 if n_in > 0 else -len(g),
+                n_in,
+                st,
+                cty,
+            )
+
+        groups: list[tuple[pd.DataFrame, tuple]] = []
+        for _, g0 in full_w.groupby(["state", "city_norm"], sort=False):
+            g0 = g0.copy()
+            info = _ginfo(g0)
+            n_in = info[2]
+            if n_in >= min_per_city:
+                continue
+            groups.append((g0, info))
+        groups.sort(key=lambda x: (x[1][0], x[1][1], x[1][2]))
+
+        for g0, _info in groups:
+            if n_extra >= max_extra_rows:
+                break
+            g0 = g0.sort_values("_rc", ascending=False) if "_rc" in g0.columns else g0
+            st = str(g0["state"].iloc[0]).strip().upper()
+            cty = str(g0["city_norm"].iloc[0])
+            n_in = len(m[(m["state"] == st) & (m["city_norm"] == cty)])
+            if n_in >= min_per_city:
+                continue
+            need = min(min_per_city - n_in, max_extra_rows - n_extra)
+            if need <= 0:
+                continue
+            pool = g0[~g0["business_id"].astype(str).isin(m_ids)]
+            if pool.empty:
+                continue
+            take = pool.head(need)
+            if "_rc" in take.columns:
+                take = take.drop(columns=["_rc"], errors="ignore")
+            m = pd.concat([m, take], ignore_index=True)
+            m_ids.update(take["business_id"].astype(str).tolist())
+            n_extra += len(take)
+
+        return m.drop(columns=["city_norm"], errors="ignore")
+
     def _build_documents(self) -> tuple[np.ndarray, list[str], pd.DataFrame]:
         """
         Build restaurant "documents" by aggregating up to max_reviews_per_business texts per restaurant.
@@ -163,6 +244,8 @@ class TouristRetrieval:
         # That can cause state/city filters to become "empty" for users even if restaurants exist,
         # because they were never included in the index candidate set.
         business_df = business_df.sort_values("review_count", ascending=False)
+        # Full-table copy for per-city supplementation (after per-state top-N, small towns may have few indexed rows)
+        business_full = business_df.copy()
         if self.max_businesses is not None and len(business_df) > self.max_businesses and "state" in business_df.columns:
             # Allocate index budget roughly uniformly across states to improve filter coverage.
             business_df["state"] = business_df["state"].astype(str).str.strip().str.upper()
@@ -174,6 +257,16 @@ class TouristRetrieval:
                 business_df = business_df.head(self.max_businesses)
         elif self.max_businesses is not None and len(business_df) > self.max_businesses:
             business_df = business_df.head(self.max_businesses)
+
+        # Top up each (state, city) to at least min_per_city so suburbs are not stuck with single-digit browse results
+        _idx_min, _idx_budget = 20, 15_000
+        business_df = self._supplement_businesses_per_city(
+            business_full,
+            business_df,
+            min_per_city=_idx_min,
+            max_extra_rows=_idx_budget,
+        )
+        # Do not apply another global review_count head here — it would drop small cities from the index again
 
         # Ensure stable types for matching
         business_df["business_id"] = business_df["business_id"].astype(str)
@@ -584,7 +677,7 @@ class TouristRetrieval:
             finite = np.isfinite(dist_c)
             dist_score[finite] = np.clip(1.0 - dist_c[finite] / (dmax + 1e-9), 0.0, 1.0)
 
-        # Multi-factor score (see docs/refactor-plan-data-vue-api.md §4 与 recommend_keywords 实现).
+        # Multi-factor score (see docs/refactor-plan-data-vue-api.md section 4 and recommend_keywords).
         # stars_rank: stars weighted by review trust (low counts shrink toward neutral).
         final_score = (
             w_semantic * sim_n

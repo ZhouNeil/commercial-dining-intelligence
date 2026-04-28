@@ -6,10 +6,14 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import {
   getMerchantCities,
+  SPATIAL_CITY_MIN_TRAIN_ROWS,
   getMerchantCoverage,
+  postMerchantHeatmap,
   postMerchantPredict,
   type MerchantCityRow,
   type MerchantCoverageResponse,
+  type MerchantHeatmapRequest,
+  type MerchantHeatmapResponse,
   type MerchantPredictResponse,
 } from "../api/client";
 
@@ -23,6 +27,10 @@ const lon = ref(-75.1652);
 const maxRows = ref(2000);
 /** Free text → backend ``resolve_merchant_category_text`` → ``cat_*`` (Yelp one-hot style). */
 const businessTypeText = ref("fast food, coffee");
+/** Yelp-style tier 1–4; optional per-person price below if unset */
+const priceTier = ref<"" | "1" | "2" | "3" | "4">("");
+/** Approx USD per person; maps to 1–4 when no tier selected */
+const pricePerPerson = ref("");
 const loading = ref(false);
 /** Map result panel visibility (toolbar popover removed; only this panel + close). */
 const resultDockOpen = ref(true);
@@ -30,6 +38,12 @@ const coverageLoading = ref(false);
 const err = ref<string | null>(null);
 const result = ref<MerchantPredictResponse | null>(null);
 const coverage = ref<MerchantCoverageResponse | null>(null);
+/** pin = click map for single-site prediction; heatmap = full-slice grid */
+const viewTab = ref<"pin" | "heatmap">("pin");
+const heatmapData = ref<MerchantHeatmapResponse | null>(null);
+const heatmapLoading = ref(false);
+const heatmapScoreMode = ref<"rule" | "ml" | "survival" | "stars">("rule");
+const heatmapGridSize = ref(12);
 
 const cities = ref<MerchantCityRow[]>([]);
 const citySearch = ref("");
@@ -39,6 +53,7 @@ let map: L.Map | null = null;
 let hullLayer: L.Layer | null = null;
 let sampleLayer: L.Layer | null = null;
 let pinLayer: L.LayerGroup | null = null;
+let heatmapRectLayer: L.LayerGroup | null = null;
 
 function formatCategoryLabel(col: string): string {
   const s = col.startsWith("cat_") ? col.slice(4) : col;
@@ -49,6 +64,38 @@ const resolvedCategoryLine = computed(() => {
   const keys = result.value?.resolved_category_keys;
   if (!keys?.length) return null;
   return keys.map((k) => formatCategoryLabel(k)).join(" · ");
+});
+
+const heatmapResolvedLine = computed(() => {
+  const keys = heatmapData.value?.resolved_category_keys;
+  if (!keys?.length) return null;
+  return keys.map((k) => formatCategoryLabel(k)).join(" · ");
+});
+
+const heatmapMetricTitle = computed(() => {
+  if (heatmapScoreMode.value === "ml") return "ML score (0–100)";
+  if (heatmapScoreMode.value === "survival") return "Survival P (0–1)";
+  if (heatmapScoreMode.value === "stars") return "Predicted stars (0–5)";
+  return "Rule-based score (0–100)";
+});
+
+const heatmapLegendEnds = computed(() => {
+  if (heatmapScoreMode.value === "survival") return { lo: "~0", hi: "~1" };
+  if (heatmapScoreMode.value === "stars") return { lo: "~1★", hi: "~5★" };
+  return { lo: "Lower", hi: "Higher" };
+});
+
+function priceFitLabel(fit: string | null | undefined): string {
+  if (fit === "good") return "Good";
+  if (fit === "medium") return "Medium";
+  if (fit === "poor") return "Poor";
+  return "—";
+}
+
+const riskEntries = computed(() => {
+  const r = result.value?.risk;
+  if (!r || typeof r !== "object") return [];
+  return Object.entries(r);
 });
 
 const filteredCities = computed(() => {
@@ -91,6 +138,104 @@ function destroyMap() {
   hullLayer = null;
   sampleLayer = null;
   pinLayer = null;
+  heatmapRectLayer = null;
+}
+
+function clearHeatmapAll() {
+  heatmapData.value = null;
+  heatmapRectLayer?.clearLayers();
+}
+
+function heatmapCellValue(row: number, col: number): number | null {
+  const h = heatmapData.value;
+  if (!h) return null;
+  const g =
+    heatmapScoreMode.value === "rule"
+      ? h.business_score
+      : heatmapScoreMode.value === "ml"
+        ? h.business_score_ml
+        : heatmapScoreMode.value === "stars"
+          ? h.predicted_stars
+          : h.survival_probability;
+  if (!g) return null;
+  const v = g[row]?.[col];
+  return v == null || Number.isNaN(v) ? null : v;
+}
+
+function scoreToHeatColor(v: number | null): string | null {
+  if (v == null) return null;
+  let t: number;
+  if (heatmapScoreMode.value === "survival") {
+    t = Math.max(0, Math.min(1, v));
+  } else if (heatmapScoreMode.value === "stars") {
+    t = Math.max(0, Math.min(1, v / 5));
+  } else {
+    t = Math.max(0, Math.min(1, v / 100));
+  }
+  const h = (1 - t) * 240;
+  return `hsl(${h}, 78%, 46%)`;
+}
+
+function drawHeatmapLayer() {
+  if (!map || !heatmapRectLayer || !heatmapData.value) return;
+  heatmapRectLayer.clearLayers();
+  const h = heatmapData.value;
+  const n = h.grid_size;
+  const latStep = (h.max_lat - h.min_lat) / n;
+  const lonStep = (h.max_lon - h.min_lon) / n;
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const v = heatmapCellValue(i, j);
+      const fill = scoreToHeatColor(v);
+      if (fill == null) continue;
+      const south = h.min_lat + i * latStep;
+      const north = h.min_lat + (i + 1) * latStep;
+      const west = h.min_lon + j * lonStep;
+      const east = h.min_lon + (j + 1) * lonStep;
+      L.rectangle(
+        [
+          [south, west],
+          [north, east],
+        ],
+        { stroke: false, fillColor: fill, fillOpacity: 0.52, interactive: false }
+      ).addTo(heatmapRectLayer);
+    }
+  }
+}
+
+async function runHeatmap() {
+  const text = businessTypeText.value.trim();
+  if (!text) {
+    err.value = "Describe the business type first (same fields as pin mode).";
+    return;
+  }
+  heatmapLoading.value = true;
+  err.value = null;
+  try {
+    const req: MerchantHeatmapRequest = {
+      city: city.value.trim() || null,
+      state: stateParam(),
+      category_query: text,
+      category_keys: [],
+      max_rows_if_no_city: maxRows.value,
+      grid_size: heatmapGridSize.value,
+    };
+    if (priceTier.value) {
+      req.price_level = parseInt(priceTier.value, 10);
+    } else {
+      const ppp = parseFloat(pricePerPerson.value.replace(",", "."));
+      if (Number.isFinite(ppp) && ppp > 0) {
+        req.price_per_person = ppp;
+      }
+    }
+    heatmapData.value = await postMerchantHeatmap(req);
+    await nextTick();
+    drawHeatmapLayer();
+  } catch (e) {
+    err.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    heatmapLoading.value = false;
+  }
 }
 
 function updatePin() {
@@ -171,6 +316,9 @@ async function loadCoverageLayers() {
       );
     }
     updatePin();
+    if (heatmapData.value) {
+      void nextTick(() => drawHeatmapLayer());
+    }
   } catch (e) {
     err.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -187,12 +335,24 @@ async function initMap() {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   }).addTo(map);
-  pinLayer = L.layerGroup().addTo(map);
+  map.createPane("merchantHeatmap");
+  const heatPane = map.getPane("merchantHeatmap");
+  if (heatPane) {
+    heatPane.style.zIndex = "420";
+    heatPane.style.pointerEvents = "none";
+  }
+  map.createPane("merchantPin");
+  const pinPane = map.getPane("merchantPin");
+  if (pinPane) pinPane.style.zIndex = "620";
+  heatmapRectLayer = L.layerGroup([], { pane: "merchantHeatmap" }).addTo(map);
+  pinLayer = L.layerGroup([], { pane: "merchantPin" }).addTo(map);
   map.on("click", (e: L.LeafletMouseEvent) => {
     lat.value = e.latlng.lat;
     lon.value = e.latlng.lng;
     updatePin();
-    debouncedPredictFromMap();
+    if (viewTab.value === "pin") {
+      debouncedPredictFromMap();
+    }
   });
   await loadCoverageLayers();
 }
@@ -217,7 +377,7 @@ async function run() {
   }
   loading.value = true;
   try {
-    result.value = await postMerchantPredict({
+    const req: Parameters<typeof postMerchantPredict>[0] = {
       city: city.value.trim() || null,
       state: stateParam(),
       lat: lat.value,
@@ -225,7 +385,16 @@ async function run() {
       category_query: text,
       category_keys: [],
       max_rows_if_no_city: maxRows.value,
-    });
+    };
+    if (priceTier.value) {
+      req.price_level = parseInt(priceTier.value, 10);
+    } else {
+      const ppp = parseFloat(pricePerPerson.value.replace(",", "."));
+      if (Number.isFinite(ppp) && ppp > 0) {
+        req.price_per_person = ppp;
+      }
+    }
+    result.value = await postMerchantPredict(req);
     resultDockOpen.value = true;
   } catch (e) {
     err.value = e instanceof Error ? e.message : String(e);
@@ -292,7 +461,18 @@ function scrollToLetter(letter: string) {
 }
 
 watch([city, maxRows, stateFilter], () => {
+  clearHeatmapAll();
   if (map) void refreshCoverage();
+});
+
+watch(heatmapScoreMode, () => {
+  if (heatmapData.value) drawHeatmapLayer();
+});
+
+watch(viewTab, (t) => {
+  if (t === "heatmap" && heatmapData.value) {
+    void nextTick(() => drawHeatmapLayer());
+  }
 });
 
 watch(
@@ -309,7 +489,7 @@ watch(result, () => {
 
 onMounted(async () => {
   try {
-    const res = await getMerchantCities({ min_rows: 10 });
+    const res = await getMerchantCities({ min_rows: SPATIAL_CITY_MIN_TRAIN_ROWS });
     cities.value = res.cities;
   } catch {
     cities.value = [];
@@ -335,10 +515,34 @@ onBeforeUnmount(() => {
       <p class="muted">
         <strong>1)</strong> Enter a <strong>restaurant or venue type</strong> in plain language.
         <strong>2)</strong> Choose an area in the city list (updates the map slice).
-        <strong>3)</strong> <strong>Click the map</strong> to place the pin — the model runs automatically.
-        Red outline: training hull; gray dots: sample points.
+        <strong>3)</strong> Use <strong>Pin &amp; detail</strong> to click the map for a single site, or
+        <strong>Region heatmap</strong> for a macro view over the same slice. Red outline: training hull; gray
+        dots: sample points.
       </p>
     </header>
+
+    <div class="view-tabs" role="tablist" aria-label="Predictor mode">
+      <button
+        type="button"
+        role="tab"
+        class="tab-btn"
+        :class="{ active: viewTab === 'pin' }"
+        :aria-selected="viewTab === 'pin'"
+        @click="viewTab = 'pin'"
+      >
+        Pin &amp; detail
+      </button>
+      <button
+        type="button"
+        role="tab"
+        class="tab-btn"
+        :class="{ active: viewTab === 'heatmap' }"
+        :aria-selected="viewTab === 'heatmap'"
+        @click="viewTab = 'heatmap'"
+      >
+        Region heatmap
+      </button>
+    </div>
 
     <div class="layout">
       <section class="map-section">
@@ -348,8 +552,16 @@ onBeforeUnmount(() => {
             {{ coverage.reference_count }} ref. rows · {{ coverage.geo_count }} with coords
             <template v-if="coverage.valid_hull"> · hull OK</template>
           </span>
+          <span v-if="viewTab === 'heatmap' && heatmapData" class="pill muted-pill">
+            {{ heatmapData.grid_size }}×{{ heatmapData.grid_size }} grid
+            <template v-if="heatmapResolvedLine"> · {{ heatmapResolvedLine }}</template>
+          </span>
           <span v-if="result" class="pill muted-pill result-inline-pill">
-            {{ (result.survival_probability * 100).toFixed(1) }}% · ★ {{ result.predicted_stars.toFixed(2) }}
+            <template v-if="result.business_score != null">Rule {{ result.business_score.toFixed(0) }}</template
+            ><template v-if="result.business_score != null && result.business_score_ml != null"> · </template
+            ><template v-if="result.business_score_ml != null">ML {{ result.business_score_ml.toFixed(0) }}</template
+            ><template v-if="result.business_score != null || result.business_score_ml != null"> · </template
+            >{{ (result.survival_probability * 100).toFixed(1) }}% · ★ {{ result.predicted_stars.toFixed(2) }}
             <span v-if="resolvedCategoryLine" class="inline-muted">· {{ resolvedCategoryLine }}</span>
           </span>
           <button type="button" class="btn-ghost" :disabled="coverageLoading" @click="refreshCoverage">
@@ -357,11 +569,71 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <p class="map-lead">Click the map to set the site (prediction runs a moment after the click if a type is filled in).</p>
+        <p v-if="viewTab === 'pin'" class="map-lead">
+          Click the map to set the site (prediction runs a moment after the click if a type is filled in).
+        </p>
+        <p v-else class="map-lead heatmap-lead">
+          Use the same <strong>type and price</strong> in the panel on the right, then <strong>Generate heatmap</strong>.
+          Warmer = higher for the selected metric. Hull-only cells: empty regions are outside the training hull.
+        </p>
+
+        <div v-if="viewTab === 'heatmap'" class="heatmap-toolbar">
+          <div class="heatmap-toolbar-row">
+            <label class="heatmap-label" for="hm-metric">Color by</label>
+            <select id="hm-metric" v-model="heatmapScoreMode" class="inp heatmap-select" aria-label="Heatmap metric">
+              <option value="rule">Rule score (0–100)</option>
+              <option value="ml">ML score (0–100)</option>
+              <option value="survival">Survival probability</option>
+              <option value="stars">Predicted stars (0–5)</option>
+            </select>
+            <label class="heatmap-label" for="hm-grid">Grid</label>
+            <select id="hm-grid" v-model.number="heatmapGridSize" class="inp heatmap-select" aria-label="Grid size">
+              <option :value="8">8×8 (faster)</option>
+              <option :value="12">12×12</option>
+              <option :value="16">16×16 (slower)</option>
+            </select>
+            <button
+              type="button"
+              class="btn-heatmap"
+              :disabled="heatmapLoading || coverageLoading"
+              @click="void runHeatmap()"
+            >
+              {{ heatmapLoading ? "Computing…" : "Generate heatmap" }}
+            </button>
+            <button
+              v-if="heatmapData"
+              type="button"
+              class="btn-ghost"
+              :disabled="heatmapLoading"
+              @click="clearHeatmapAll"
+            >
+              Clear overlay
+            </button>
+          </div>
+        </div>
+
         <div class="map-wrap">
-          <div ref="mapEl" class="map-host" role="application" aria-label="Map: click to set site" />
+          <div
+            ref="mapEl"
+            class="map-host"
+            role="application"
+            :aria-label="viewTab === 'pin' ? 'Map: click to set site' : 'Map: region heatmap'"
+          />
+          <div
+            v-if="viewTab === 'heatmap' && heatmapData"
+            class="heatmap-legend"
+            role="img"
+            :aria-label="heatmapMetricTitle + ', lower to higher'"
+          >
+            <div class="heatmap-legend-title">{{ heatmapMetricTitle }}</div>
+            <div class="heatmap-legend-bar" aria-hidden="true" />
+            <div class="heatmap-legend-ticks">
+              <span>{{ heatmapLegendEnds.lo }}</span>
+              <span>{{ heatmapLegendEnds.hi }}</span>
+            </div>
+          </div>
           <aside
-            v-if="result && resultDockOpen"
+            v-if="result && resultDockOpen && viewTab === 'pin'"
             class="result-dock"
             aria-live="polite"
             aria-label="Prediction result"
@@ -384,19 +656,44 @@ onBeforeUnmount(() => {
                 <div class="stat-label">Predicted stars</div>
                 <div class="stat-value">{{ result.predicted_stars.toFixed(2) }} / 5</div>
               </div>
-              <div class="stat">
-                <div class="stat-label">Reference rows</div>
-                <div class="stat-value">{{ result.reference_row_count }}</div>
+              <div v-if="result.business_score != null" class="stat">
+                <div class="stat-label">Composite score — rules (0–100)</div>
+                <div class="stat-value">{{ result.business_score.toFixed(0) }}</div>
+                <p class="stat-note">Rule-based blend of survival, stars, price vs neighborhood, and risk.</p>
               </div>
-              <div class="stat stat-small">
-                <div class="stat-label">Inside data hull</div>
-                <div class="stat-value">{{ result.inside_reference_hull ? "Yes" : "No" }}</div>
+              <div v-if="result.business_score_ml != null" class="stat">
+                <div class="stat-label">ML score (0–100)</div>
+                <div class="stat-value">{{ result.business_score_ml.toFixed(0) }}</div>
+                <p class="stat-note">Supervised P(still open) from location and category features only (not using survival/rating model outputs as inputs).</p>
               </div>
+              <div
+                v-if="
+                  result.nearby_avg_price_level != null || result.price_fit != null || result.price_gap != null
+                "
+                class="stat"
+              >
+                <div class="stat-label">Price and neighborhood</div>
+                <p class="stat-note" style="margin: 0 0 0.5rem">
+                  <template v-if="result.nearby_avg_price_level != null"
+                    >1 km neighborhood average price tier is about <strong>{{ result.nearby_avg_price_level.toFixed(1) }}</strong> (1=lowest)</template
+                  >
+                  <template
+                    v-if="result.price_gap != null"
+                  >; compared to your tier, about <strong>{{ result.price_gap >= 0 ? "+" : "" }}{{ result.price_gap.toFixed(1) }}</strong> tier(s) off</template
+                  >
+                  <template v-if="result.price_fit"
+                    >; local match: <strong>{{ priceFitLabel(result.price_fit) }}</strong></template
+                  >
+                </p>
+              </div>
+              <ul v-if="riskEntries.length" class="risk-list" role="list">
+                <li v-for="[k, v] in riskEntries" :key="k" class="risk-item">
+                  <span class="risk-k">{{ k }}</span>
+                  <span class="risk-v">{{ v }}</span>
+                </li>
+              </ul>
+              <p v-if="result.explanation" class="explanation-box">{{ result.explanation }}</p>
             </div>
-            <template v-if="Object.keys(result.live_feature_preview || {}).length">
-              <h2 class="subhead subhead--dock">Feature preview</h2>
-              <pre class="code code--dock">{{ JSON.stringify(result.live_feature_preview, null, 2) }}</pre>
-            </template>
           </aside>
         </div>
         <p class="map-hint">
@@ -469,6 +766,30 @@ onBeforeUnmount(() => {
             @keydown.enter.prevent="void run()"
           />
           <p v-if="resolvedCategoryLine" class="resolved-line">Last run used: {{ resolvedCategoryLine }}</p>
+          <p class="form-step" style="margin-top: 1rem">Price (optional)</p>
+          <p class="form-hint">Pick a price tier, or only fill approximate USD per person — one or the other. Used vs the 1 km neighborhood mean.</p>
+          <div class="price-row">
+            <label class="field-label" for="price-tier">Price tier 1–4</label>
+            <select id="price-tier" v-model="priceTier" class="inp price-select" aria-label="Price tier 1 to 4">
+              <option value="">None (use per-person price below)</option>
+              <option value="1">1 — lowest</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4 — highest</option>
+            </select>
+          </div>
+          <div v-if="!priceTier" class="price-row">
+            <label class="field-label" for="price-ppp">Price per person (approx. USD)</label>
+            <input
+              id="price-ppp"
+              v-model="pricePerPerson"
+              class="inp"
+              type="text"
+              inputmode="decimal"
+              placeholder="e.g. 15"
+              aria-label="Approx price per person USD"
+            />
+          </div>
         </div>
 
         <p v-if="err" class="err">{{ err }}</p>
@@ -663,6 +984,130 @@ onBeforeUnmount(() => {
   font-size: 0.8rem;
   line-height: 1.4;
   color: #57534e;
+}
+
+.heatmap-lead strong {
+  color: #44403c;
+}
+
+.view-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 1rem 0 0.25rem;
+  padding: 0.2rem;
+  background: #f5f5f4;
+  border-radius: 12px;
+  border: 1px solid #e7e5e4;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.tab-btn {
+  padding: 0.45rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: #78716c;
+  cursor: pointer;
+}
+
+.tab-btn:hover {
+  color: #44403c;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.tab-btn.active {
+  background: #fff;
+  color: #b91c1c;
+  box-shadow: 0 1px 3px rgba(28, 25, 23, 0.12);
+}
+
+.heatmap-toolbar {
+  margin: 0.5rem 0 0.65rem;
+  padding: 0.65rem 0.75rem;
+  background: #fafaf9;
+  border: 1px solid #e7e5e4;
+  border-radius: 12px;
+}
+
+.heatmap-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.65rem;
+}
+
+.heatmap-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #57534e;
+}
+
+.heatmap-select {
+  width: auto;
+  min-width: 9.5rem;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.5rem;
+}
+
+.btn-heatmap {
+  padding: 0.4rem 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  border: none;
+  border-radius: 8px;
+  background: #b91c1c;
+  color: #fff;
+  cursor: pointer;
+}
+
+.btn-heatmap:hover:not(:disabled) {
+  background: #991b1b;
+}
+
+.btn-heatmap:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.heatmap-legend {
+  position: absolute;
+  z-index: 1150;
+  left: 10px;
+  bottom: 10px;
+  padding: 0.5rem 0.55rem 0.45rem;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #e7e5e4;
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(28, 25, 23, 0.12);
+  min-width: 9.5rem;
+  pointer-events: none;
+}
+
+.heatmap-legend-title {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #57534e;
+  margin-bottom: 0.35rem;
+}
+
+.heatmap-legend-bar {
+  height: 10px;
+  border-radius: 5px;
+  background: linear-gradient(90deg, hsl(240, 78%, 46%), hsl(120, 78%, 44%), hsl(0, 78%, 48%));
+}
+
+.heatmap-legend-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.2rem;
+  font-size: 0.65rem;
+  color: #78716c;
 }
 
 .btn-ghost {
@@ -1103,5 +1548,66 @@ onBeforeUnmount(() => {
   box-shadow:
     0 18px 48px rgba(0, 0, 0, 0.38),
     0 6px 16px rgba(28, 25, 23, 0.22);
+}
+
+.price-row {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-width: 100%;
+}
+
+.field-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #57534e;
+}
+
+.price-select {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.risk-list {
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  list-style: none;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.risk-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  margin: 0.2rem 0;
+}
+
+.risk-k {
+  font-weight: 700;
+  color: #92400e;
+}
+
+.risk-v {
+  color: #44403c;
+  flex: 1;
+  min-width: 8rem;
+}
+
+.explanation-box {
+  margin: 0.35rem 0 0;
+  padding: 0.65rem 0.75rem;
+  background: #f5f5f4;
+  border: 1px solid #e7e5e4;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #44403c;
+  overflow-wrap: anywhere;
 }
 </style>

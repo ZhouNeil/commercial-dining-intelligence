@@ -8,8 +8,13 @@ export type HealthResponse = components["schemas"]["HealthResponse"];
 export type MerchantPredictRequest = components["schemas"]["MerchantPredictRequest"];
 export type MerchantPredictResponse = components["schemas"]["MerchantPredictResponse"];
 export type MerchantCoverageResponse = components["schemas"]["MerchantCoverageResponse"];
+export type MerchantHeatmapRequest = components["schemas"]["MerchantHeatmapRequest"];
+export type MerchantHeatmapResponse = components["schemas"]["MerchantHeatmapResponse"];
 export type MerchantCityRow = components["schemas"]["MerchantCityRow"];
 export type MerchantCitiesResponse = components["schemas"]["MerchantCitiesResponse"];
+
+/** Kept in sync with `services/merchant_inference.SPATIAL_CITY_MIN_TRAIN_ROWS` (city list floor). */
+export const SPATIAL_CITY_MIN_TRAIN_ROWS = 50;
 export type MerchantCategoriesResponse = components["schemas"]["MerchantCategoriesResponse"];
 export type StatesResponse = components["schemas"]["StatesResponse"];
 type GeneratedSearchRequest = components["schemas"]["SearchRequest"];
@@ -70,7 +75,17 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   });
-  if (!res.ok) throw new Error(await parseError(res));
+  if (!res.ok) {
+    let msg = await parseError(res);
+    if (
+      res.status === 404 &&
+      (path.includes("/merchant/heatmap") || path.includes("/merchant/predict"))
+    ) {
+      msg +=
+        " — API returned 404: stop and restart the backend (e.g. ./scripts/run_api.sh) so it loads the latest routes.";
+    }
+    throw new Error(msg);
+  }
   return res.json() as Promise<T>;
 }
 
@@ -93,11 +108,10 @@ export function postMerchantPredict(
 
 export function getMerchantCities(params?: { min_rows?: number }): Promise<MerchantCitiesResponse> {
   const sp = new URLSearchParams();
-  if (params?.min_rows != null) {
-    sp.set("min_rows", String(params.min_rows));
-  }
-  const q = sp.toString();
-  return json<MerchantCitiesResponse>(`/api/v1/merchant/cities${q ? `?${q}` : ""}`, { method: "GET" });
+  // Always pass min_rows so proxies/old defaults match backend `SPATIAL_CITY_MIN_TRAIN_ROWS`
+  const min = params?.min_rows ?? SPATIAL_CITY_MIN_TRAIN_ROWS;
+  sp.set("min_rows", String(min));
+  return json<MerchantCitiesResponse>(`/api/v1/merchant/cities?${sp.toString()}`, { method: "GET" });
 }
 
 export function getMerchantCategories(params?: {
@@ -138,6 +152,15 @@ export function getMerchantCategoryResolve(params: {
     sp.set("max_rows_if_no_city", String(params.max_rows_if_no_city));
   }
   return json<MerchantCategoriesResponse>(`/api/v1/merchant/categories/resolve?${sp.toString()}`, { method: "GET" });
+}
+
+export function postMerchantHeatmap(
+  body: MerchantHeatmapRequest
+): Promise<MerchantHeatmapResponse> {
+  return json<MerchantHeatmapResponse>("/api/v1/merchant/heatmap", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export function getMerchantCoverage(params: {

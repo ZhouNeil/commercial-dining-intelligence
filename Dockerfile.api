@@ -1,4 +1,4 @@
-# 仅 API 服务；数据与模型通过卷挂载到 /app（见 docs/refactor-plan-data-vue-api.md）
+# API-only image; mount data and models at /app (see docs/refactor-plan-data-vue-api.md)
 FROM python:3.11-slim-bookworm
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1

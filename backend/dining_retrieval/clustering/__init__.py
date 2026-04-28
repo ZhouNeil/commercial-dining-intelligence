@@ -1,1 +1,1 @@
-"""K-Means clustering helpers (notebook / 可迁前端)."""
+"""K-Means clustering helpers (notebook / may move to the client)."""

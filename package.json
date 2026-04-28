@@ -1,7 +1,7 @@
 {
   "name": "commercial-dining-intelligence",
   "private": true,
-  "description": "根目录脚本：转发到 frontend/。首次请先执行 npm run install:frontend",
+  "description": "Root scripts passthrough to frontend/. Run npm run install:frontend first.",
   "scripts": {
     "install:frontend": "npm install --prefix frontend",
     "dev": "npm --prefix frontend run dev",

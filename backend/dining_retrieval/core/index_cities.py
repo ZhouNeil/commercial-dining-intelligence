@@ -1,16 +1,16 @@
 """
 Indexed city scope for `business_dining.csv`.
 
-Verification: 截至构建时，全表约有上千个不同的 (city, state) 组合；课堂/项目切片里
-「主体体量」集中在按 **商户数降序** 的前 11 个都会区。索引默认只收录这些组合，
-以减小索引、聚焦主市场。
+At build time, the full table can have many (city, state) pairs; project slices often focus
+on the top metros by business count. The default index lists only these pairs to keep the
+index small and target primary markets.
 
-若在 CSV 中有同一都会区的不同写法（如 Saint Louis / St. Louis），在集合里一并列出。
+If the CSV uses multiple spellings for the same metro (e.g. Saint Louis / St. Louis), list both.
 """
 
 from __future__ import annotations
 
-# (city lower stripped, state USPS upper) — 与 `meta.city_norm` / `state_norm` 一致
+# (city lower stripped, state USPS upper) — matches `meta.city_norm` / `state_norm`
 INDEX_ALLOWED_CITY_STATE: frozenset[tuple[str, str]] = frozenset(
     {
         ("philadelphia", "PA"),

@@ -38,6 +38,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/merchant/heatmap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Merchant Heatmap Get
+         * @description Browser-friendly probe; heavy work uses POST.
+         */
+        get: operations["merchant_heatmap_get_api_v1_merchant_heatmap_get"];
+        put?: never;
+        /** Merchant Heatmap */
+        post: operations["merchant_heatmap_api_v1_merchant_heatmap_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/merchant/cities": {
         parameters: {
             query?: never;
@@ -79,7 +100,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Resolve merchant business type text to cat_* keys */
+        /** Merchant Categories Resolve */
         get: operations["merchant_categories_resolve_api_v1_merchant_categories_resolve_get"];
         put?: never;
         post?: never;
@@ -166,71 +187,52 @@ export interface components {
             survival_pkl: boolean;
             /** Rating Pkl */
             rating_pkl: boolean;
+            /**
+             * Business Score Ml Pkl
+             * @default false
+             */
+            business_score_ml_pkl: boolean;
             /** Retrieval Business Csv */
             retrieval_business_csv: boolean;
             /** Retrieval Index */
             retrieval_index: boolean;
         };
-        /** MerchantPredictRequest */
-        MerchantPredictRequest: {
-            /**
-             * City
-             * @description 过滤参考商户；为空则取表头前 N 行
-             */
-            city?: string | null;
-            /**
-             * State
-             * @description Optional USPS state to disambiguate duplicate city names
-             */
-            state?: string | null;
-            /** Lat */
-            lat: number;
-            /** Lon */
-            lon: number;
+        /**
+         * MerchantCategoriesResponse
+         * @description cat_* names aligned with the predict slice for the current city/state/max_rows.
+         */
+        MerchantCategoriesResponse: {
             /**
              * Category Keys
-             * @description train_spatial cat_*; optional if category_query is set
-             * @default []
+             * @description cat_* names in train_spatial that appear at least once in the slice (all-zero columns dropped unless all are zero).
              */
-            category_keys: string[];
-            /**
-             * Category Query
-             * @description Plain text, e.g. 'burger, coffee' — server resolves to cat_* for the slice
-             */
-            category_query?: string | null;
-            /**
-             * Max Rows If No City
-             * @default 2000
-             */
-            max_rows_if_no_city: number;
+            category_keys?: string[];
         };
-        /** MerchantPredictResponse */
-        MerchantPredictResponse: {
-            /**
-             * Resolved Category Keys
-             * @default []
-             */
-            resolved_category_keys: string[];
-            /** Survival Probability */
-            survival_probability: number;
-            /** Predicted Stars */
-            predicted_stars: number;
-            /** Reference Row Count */
-            reference_row_count: number;
-            /** City Filter */
-            city_filter?: string | null;
-            /** Metrics */
-            metrics?: {
-                [key: string]: number;
-            };
-            /** Live Feature Preview */
-            live_feature_preview?: {
-                [key: string]: number;
-            };
-            /** Inside Reference Hull */
-            inside_reference_hull: boolean;
+        /** MerchantCitiesResponse */
+        MerchantCitiesResponse: {
+            /** Cities */
+            cities: components["schemas"]["MerchantCityRow"][];
         };
-        /** MerchantCoverageResponse */
+        /** MerchantCityRow */
+        MerchantCityRow: {
+            /** City */
+            city: string;
+            /**
+             * State
+             * @default
+             */
+            state: string;
+            /** Row Count */
+            row_count: number;
+            /** Center Lat */
+            center_lat: number;
+            /** Center Lon */
+            center_lon: number;
+        };
+        /**
+         * MerchantCoverageResponse
+         * @description Map overlay: bbox, centroid, convex hull of reference rows, sampled training points.
+         */
         MerchantCoverageResponse: {
             /** City Filter */
             city_filter?: string | null;
@@ -251,59 +253,240 @@ export interface components {
             /** Center Lat */
             center_lat: number;
             /** Hull Geojson */
-            hull_geojson?: Record<string, never> | null;
+            hull_geojson?: {
+                [key: string]: unknown;
+            } | null;
             /** Sample Points Geojson */
-            sample_points_geojson?: Record<string, never> | null;
+            sample_points_geojson?: {
+                [key: string]: unknown;
+            } | null;
             /** Valid Hull */
             valid_hull: boolean;
         };
-        /** MerchantCityRow */
-        MerchantCityRow: {
+        /**
+         * MerchantHeatmapRequest
+         * @description Same filters as merchant predict, without a pin — scores a regular grid over the slice bbox.
+         */
+        MerchantHeatmapRequest: {
             /** City */
-            city: string;
+            city?: string | null;
             /**
              * State
+             * @description Optional USPS state (must match train_spatial.state when used).
+             */
+            state?: string | null;
+            /**
+             * Category Keys
+             * @description Explicit cat_* columns; optional if category_query is set.
+             */
+            category_keys?: string[];
+            /**
+             * Category Query
+             * @description Plain text resolved to cat_* in the current slice (same as /merchant/predict).
+             */
+            category_query?: string | null;
+            /**
+             * Max Rows If No City
+             * @default 2000
+             */
+            max_rows_if_no_city: number;
+            /**
+             * Price Level
+             * @description Yelp-style tier vs local mean within 1 km.
+             */
+            price_level?: number | null;
+            /** Price Per Person */
+            price_per_person?: number | null;
+            /**
+             * Grid Size
+             * @description Number of rows/columns over min/max lat/lon of the reference slice (max 256 cells).
+             * @default 12
+             */
+            grid_size: number;
+        };
+        /** MerchantHeatmapResponse */
+        MerchantHeatmapResponse: {
+            /** City Filter */
+            city_filter?: string | null;
+            /** Reference Row Count */
+            reference_row_count: number;
+            /** Grid Size */
+            grid_size: number;
+            /** Min Lat */
+            min_lat: number;
+            /** Max Lat */
+            max_lat: number;
+            /** Min Lon */
+            min_lon: number;
+            /** Max Lon */
+            max_lon: number;
+            /** Resolved Category Keys */
+            resolved_category_keys?: string[];
+            /**
+             * Business Score
+             * @description Row index ~ south→north, column ~ west→east; null = outside training hull (skipped).
+             */
+            business_score?: (number | null)[][];
+            /** Business Score Ml */
+            business_score_ml?: (number | null)[][];
+            /**
+             * Survival Probability
+             * @description Survival head probability 0–1 per cell; null when cell skipped.
+             */
+            survival_probability?: (number | null)[][];
+            /**
+             * Predicted Stars
+             * @description Rating regressor: predicted stars (~0–5) per cell; null when cell skipped.
+             */
+            predicted_stars?: (number | null)[][];
+        };
+        /** MerchantPredictRequest */
+        MerchantPredictRequest: {
+            /**
+             * City
+             * @description Filter reference businesses; if empty, use the first N rows of the table
+             */
+            city?: string | null;
+            /**
+             * State
+             * @description Optional USPS state to disambiguate duplicate city names (must match train_spatial.state).
+             */
+            state?: string | null;
+            /** Lat */
+            lat: number;
+            /** Lon */
+            lon: number;
+            /**
+             * Category Keys
+             * @description Explicit train_spatial cat_* columns. Optional if category_query is set.
+             */
+            category_keys?: string[];
+            /**
+             * Category Query
+             * @description Plain text (e.g. 'fast food, coffee', 'burger'); server maps to cat_* in the current slice.
+             */
+            category_query?: string | null;
+            /**
+             * Max Rows If No City
+             * @default 2000
+             */
+            max_rows_if_no_city: number;
+            /**
+             * Price Level
+             * @description Yelp-style price tier 1–4; compared to mean attr_restaurantspricerange2 within 1 km.
+             */
+            price_level?: number | null;
+            /**
+             * Price Per Person
+             * @description USD-ish per person; mapped to 1–4 if price_level not set.
+             */
+            price_per_person?: number | null;
+        };
+        /** MerchantPredictResponse */
+        MerchantPredictResponse: {
+            /** Survival Probability */
+            survival_probability: number;
+            /** Predicted Stars */
+            predicted_stars: number;
+            /** Reference Row Count */
+            reference_row_count: number;
+            /** City Filter */
+            city_filter?: string | null;
+            /** Metrics */
+            metrics?: {
+                [key: string]: number;
+            };
+            /** Live Feature Preview */
+            live_feature_preview?: {
+                [key: string]: number;
+            };
+            /**
+             * Inside Reference Hull
+             * @description True if the pin lies inside the convex hull of reference training coordinates for this slice.
+             */
+            inside_reference_hull: boolean;
+            /**
+             * Resolved Category Keys
+             * @description cat_* columns used for this prediction (from category_query and/or category_keys).
+             */
+            resolved_category_keys?: string[];
+            /**
+             * Price Fit
+             * @description good | medium | poor — rule-based match vs mean local price level (1 km).
+             */
+            price_fit?: string | null;
+            /** Price Gap */
+            price_gap?: number | null;
+            /** Nearby Avg Price Level */
+            nearby_avg_price_level?: number | null;
+            /**
+             * Risk
+             * @description competition, location, price: high|medium|low|unknown (rule-based).
+             */
+            risk?: {
+                [key: string]: string;
+            };
+            /**
+             * Explanation
+             * @description Short human-readable summary for the business user.
              * @default
              */
-            state: string;
-            /** Row Count */
-            row_count: number;
-            /** Center Lat */
-            center_lat: number;
-            /** Center Lon */
-            center_lon: number;
+            explanation: string;
+            /**
+             * Business Score
+             * @description 0–100 composite from survival, stars, competition, price match (rule-based V1).
+             */
+            business_score?: number | null;
+            /**
+             * Business Score Ml
+             * @description 0–100 supervised score: P(is_open) from spatial/category features only (no survival/rating heads as inputs). Null if artifact missing.
+             */
+            business_score_ml?: number | null;
         };
-        /** MerchantCitiesResponse */
-        MerchantCitiesResponse: {
-            /** Cities */
-            cities: components["schemas"]["MerchantCityRow"][];
-        };
-        /** MerchantCategoriesResponse */
-        MerchantCategoriesResponse: {
-            /** Category Keys */
-            category_keys: string[];
+        /** SearchActionEvent */
+        SearchActionEvent: {
+            /**
+             * Action
+             * @description detail_open | like | pass | refresh | slider_override
+             */
+            action: string;
+            /**
+             * Business Id
+             * @description Related business ID (if any)
+             */
+            business_id?: string | null;
+            /**
+             * Query Text
+             * @description query_text when the action was triggered
+             */
+            query_text?: string | null;
         };
         /**
          * SearchRequest
-         * @description 与前端 `/search`（Step1–2 与侧栏权重）对齐的检索请求字段。
+         * @description Search request body aligned with the `/search` page (Step1–2 and sidebar weights).
          */
         SearchRequest: {
             /**
              * Query
-             * @description Step2 自然语言；discover_only 时可空
+             * @description Step2 natural language; may be empty when discover_only is true
              * @default
              */
             query: string;
             /**
              * State
-             * @description USPS 州码
+             * @description USPS state code
              */
             state: string;
             /**
              * City
-             * @description 可选城市名（精确匹配）
+             * @description Optional city name (exact match)
              */
             city?: string | null;
+            /**
+             * User Location
+             * @description User's current location input for distance ranking
+             */
+            user_location?: string | null;
             /**
              * Top K
              * @default 10
@@ -311,12 +494,12 @@ export interface components {
             top_k: number;
             /**
              * Pool K
-             * @description 内部候选池 Top-N（前端默认 45）
+             * @description Internal candidate pool size Top-N (frontend default 45)
              */
             pool_k?: number | null;
             /**
              * Keywords Extra
-             * @description 额外关键词
+             * @description Extra keywords
              */
             keywords_extra?: string | null;
             /**
@@ -326,13 +509,13 @@ export interface components {
             force_rebuild_index: boolean;
             /**
              * Discover Only
-             * @description True = 「Find general restaurants here」
+             * @description True = discover-only / 'Find general restaurants here' mode
              * @default false
              */
             discover_only: boolean;
             /**
              * Cuisines
-             * @description 菜系多选：Sushi, Steakhouse, Korean, …
+             * @description Cuisine multiselect: Sushi, Steakhouse, Korean, ...
              */
             cuisines?: string[];
             /**
@@ -364,6 +547,33 @@ export interface components {
             liked_business_ids?: string[];
             /** Disliked Business Ids */
             disliked_business_ids?: string[];
+            /**
+             * Rl Enabled
+             * @description Whether to enable RL initial policy selection
+             * @default true
+             */
+            rl_enabled: boolean;
+            /**
+             * Rl User Overrode
+             * @description User manually overrode weight sliders
+             * @default false
+             */
+            rl_user_overrode: boolean;
+            /**
+             * Rl Prev Selected Arm
+             * @description Last RL selected arm
+             */
+            rl_prev_selected_arm?: string | null;
+            /**
+             * Rl Prev Intent Name
+             * @description Last recognized RL intent name
+             */
+            rl_prev_intent_name?: string | null;
+            /**
+             * Rl Action Events
+             * @description Client action events since the last search (RL feedback)
+             */
+            rl_action_events?: components["schemas"]["SearchActionEvent"][];
         };
         /** SearchResponse */
         SearchResponse: {
@@ -456,6 +666,61 @@ export interface operations {
             };
         };
     };
+    merchant_heatmap_get_api_v1_merchant_heatmap_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+        };
+    };
+    merchant_heatmap_api_v1_merchant_heatmap_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MerchantHeatmapRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MerchantHeatmapResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     merchant_cities_api_v1_merchant_cities_get: {
         parameters: {
             query?: {
@@ -523,6 +788,7 @@ export interface operations {
     merchant_categories_resolve_api_v1_merchant_categories_resolve_get: {
         parameters: {
             query: {
+                /** @description Free text, e.g. 'burger', 'fast food, coffee' — matched to train_spatial cat_* in this city slice. */
                 q: string;
                 city?: string | null;
                 state?: string | null;
@@ -542,13 +808,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["MerchantCategoriesResponse"];
                 };
-            };
-            /** @description No category match */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {

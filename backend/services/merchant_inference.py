@@ -3,21 +3,66 @@ Merchant site inference: spatial features + saved sklearn models (no UI).
 
 Survival: ``models/artifacts/global_survival_model.pkl`` (binary proba).
 Stars: ``models/artifacts/global_rating_model.pkl`` (regression).
+Business score ML (optional): ``models/artifacts/business_score_ml.pkl`` — P(open) from env/category features only (no survival/rating head outputs as inputs).
 """
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
+import importlib
 import joblib
 import numpy as np
 import pandas as pd
 from scipy.spatial import ConvexHull
 
+
+def _prime_numpy_random_submodules() -> None:
+    """Pre-import BitGenerator submodules before joblib unpickles models (avoids lazy-load errors like PCG64 not registered)."""
+    for name in (
+        "numpy.random._pcg64",
+        "numpy.random._mt19937",
+        "numpy.random._philox",
+        "numpy.random._sfc64",
+    ):
+        try:
+            importlib.import_module(name)
+        except Exception:
+            pass
+
+
+def _load_merchant_joblib(p: Path):
+    _prime_numpy_random_submodules()
+    try:
+        return joblib.load(p)
+    except Exception as e:
+        if "BitGenerator" in str(e) or "PCG64" in str(e):
+            raise RuntimeError(
+                "Failed to load models/artifacts/*.pkl: NumPy 1.x cannot unpickle some joblib files saved with NumPy 2.x "
+                "(PCG64 / BitGenerator format differs). Fix one of: "
+                "(1) pip install -U 'numpy>=2.0,<3' 'scikit-learn>=1.4' in this venv, then restart the API; "
+                "(2) keep NumPy 1.26 and retrain in this venv: pip install 'numpy>=1.26.0,<2' && "
+                "PYTHONPATH=backend:. python models/merchant_predictor.py to overwrite the pkls. "
+                f"Original error: {e}"
+            ) from e
+        raise
+
 from pipelines.spatial_feature_engineer import SpatialFeatureEngineer
+
+# Min train_spatial rows per (city, state) to appear in /merchant/cities and tourist defaults.
+# Keep in sync with /api/v1/merchant/cities min_rows, Merchant page; too few points make hulls/features unreliable.
+# Re-tune with `python scripts/spatial_train_diagnostics.py threshold` and sync `frontend/src/api/client.ts` if the dataset changes.
+SPATIAL_CITY_MIN_TRAIN_ROWS: int = 50
+
+
+def _city_group_key_spatial(city: str) -> str:
+    """Same normalization as the tourist UI: collapse spaces, Unicode NFKC, then casefold."""
+    t = re.sub(r"\s+", " ", str(city or "").strip())
+    return unicodedata.normalize("NFKC", t).casefold()
 
 
 @dataclass(frozen=True)
@@ -29,12 +74,39 @@ class MerchantPredictResult:
     metrics: dict[str, float]
     live_feature_preview: dict[str, float] = field(default_factory=dict)
     inside_reference_hull: bool = True
+    # Decision support (price / risk / explanation / composite score): rule-based, no extra model heads
+    price_fit: Optional[str] = None  # good | medium | poor
+    price_gap: Optional[float] = None
+    nearby_avg_price_level: Optional[float] = None
+    risk: dict[str, str] = field(default_factory=dict)
+    explanation: str = ""
+    business_score: Optional[float] = None
+    # Supervised P(is_open) × 100; trained without survival_probability / predicted_stars as features
+    business_score_ml: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class MerchantHeatmapResult:
+    """Regular grid over the reference bbox; null cells skipped (outside convex hull when hull exists)."""
+
+    city_filter: Optional[str]
+    reference_row_count: int
+    grid_size: int
+    min_lat: float
+    max_lat: float
+    min_lon: float
+    max_lon: float
+    resolved_category_keys: tuple[str, ...]
+    business_score: tuple[tuple[Optional[float], ...], ...]
+    business_score_ml: tuple[tuple[Optional[float], ...], ...]
+    survival_probability: tuple[tuple[Optional[float], ...], ...]
+    predicted_stars: tuple[tuple[Optional[float], ...], ...]
 
 
 def resolve_repo_root(explicit: Optional[Path] = None) -> Path:
     if explicit is not None:
         return explicit.resolve()
-    # backend/services/... → 仓库根
+    # backend/services/... -> repo root
     return Path(__file__).resolve().parents[2]
 
 
@@ -275,8 +347,10 @@ def slice_local_reference(
     state: Optional[str] = None,
 ) -> Tuple[pd.DataFrame, Optional[str]]:
     if "city" in global_ref.columns and city and str(city).strip():
-        c = str(city).strip().lower()
-        local = global_ref[global_ref["city"].astype(str).str.lower() == c].copy()
+        # Same key as `list_merchant_spatial_cities` so CSV "Abington Township" vs UI "Abington" does not yield 0 rows
+        c_key = _city_group_key_spatial(str(city).strip())
+        g_key = global_ref["city"].astype(str).map(_city_group_key_spatial)
+        local = global_ref[g_key == c_key].copy()
         if state and str(state).strip() and "state" in local.columns:
             st = str(state).strip().upper()
             local = local[local["state"].astype(str).str.strip().str.upper() == st].copy()
@@ -289,20 +363,186 @@ def slice_local_reference(
 @lru_cache(maxsize=4)
 def _survival_model(repo_root_s: str):
     p = Path(repo_root_s) / "models" / "artifacts" / "global_survival_model.pkl"
-    return joblib.load(p)
+    return _load_merchant_joblib(p)
 
 
 @lru_cache(maxsize=4)
 def _rating_model(repo_root_s: str):
     p = Path(repo_root_s) / "models" / "artifacts" / "global_rating_model.pkl"
-    return joblib.load(p)
+    return _load_merchant_joblib(p)
+
+
+@lru_cache(maxsize=4)
+def _business_score_ml_model(repo_root_s: str):
+    p = Path(repo_root_s) / "models" / "artifacts" / "business_score_ml.pkl"
+    if not p.is_file():
+        return None
+    return _load_merchant_joblib(p)
+
+
+def _predict_business_score_ml(live_df: pd.DataFrame, repo_root: Path) -> Optional[float]:
+    """Map sklearn P(class=1) to 0–100; missing artifact or misaligned model → None."""
+    clf = _business_score_ml_model(str(repo_root.resolve()))
+    if clf is None:
+        return None
+    try:
+        names = list(clf.feature_names_in_)
+    except AttributeError:
+        return None
+    row = np.zeros((1, len(names)), dtype=np.float64)
+    s = live_df.iloc[0]
+    cols = set(live_df.columns)
+    for i, name in enumerate(names):
+        if name in cols:
+            v = s[name]
+            row[0, i] = float(v) if pd.notna(v) else 0.0
+    X = pd.DataFrame(row, columns=names)
+    p_pos = float(clf.predict_proba(X)[0, 1])
+    return max(0.0, min(100.0, p_pos * 100.0))
+
+
+def clear_merchant_spatial_cities_cache() -> None:
+    """Clear the `list_merchant_spatial_cities` LRU; call after data or filter logic changes."""
+    _list_merchant_spatial_cities_cached.cache_clear()
 
 
 def clear_model_cache() -> None:
-    """测试或热重载时清空 joblib 单例缓存。"""
+    """Clear joblib model singleton caches (tests or hot reload)."""
     _survival_model.cache_clear()
     _rating_model.cache_clear()
-    _list_merchant_spatial_cities_cached.cache_clear()
+    _business_score_ml_model.cache_clear()
+    clear_merchant_spatial_cities_cache()
+
+
+def _haversine_km_vec(lat0: float, lon0: float, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
+    r_earth = 6371.0
+    p1 = np.radians(float(lat0))
+    p2 = np.radians(lat.astype(float))
+    dlo = np.radians(float(lon0) - lon.astype(float))
+    a = np.sin((p2 - p1) * 0.5) ** 2 + np.cos(p1) * np.cos(p2) * np.sin(dlo * 0.5) ** 2
+    return 2.0 * r_earth * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+
+
+def _ppp_to_price_level(ppp: float) -> int:
+    """Map per-person price to 1–4 to align with attr_restaurantspricerange2."""
+    if ppp < 12:
+        return 1
+    if ppp < 28:
+        return 2
+    if ppp < 50:
+        return 3
+    return 4
+
+
+def _nearby_mean_price_level(
+    local_ref: pd.DataFrame, lat: float, lon: float, radius_km: float = 1.0
+) -> float:
+    col = "attr_restaurantspricerange2"
+    if col not in local_ref.columns or "latitude" not in local_ref.columns:
+        return float("nan")
+    la = pd.to_numeric(local_ref["latitude"], errors="coerce")
+    lo = pd.to_numeric(local_ref["longitude"], errors="coerce")
+    pl = pd.to_numeric(local_ref[col], errors="coerce")
+    m = la.notna() & lo.notna() & pl.notna()
+    if not bool(m.any()):
+        return float("nan")
+    d = _haversine_km_vec(float(lat), float(lon), la[m].to_numpy(), lo[m].to_numpy())
+    vals = pl[m].to_numpy()[d <= float(radius_km)]
+    if len(vals) == 0:
+        return float("nan")
+    return float(np.nanmean(vals))
+
+
+def _build_merchant_decision_support(
+    live_df: pd.DataFrame,
+    local_ref: pd.DataFrame,
+    inside_hull: bool,
+    survival_probability: float,
+    predicted_stars: float,
+    lat: float,
+    lon: float,
+    price_level: Optional[int],
+    price_per_person: Optional[float],
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "price_fit": None,
+        "price_gap": None,
+        "nearby_avg_price_level": None,
+        "risk": {},
+        "explanation": "",
+        "business_score": None,
+    }
+    nearby = _nearby_mean_price_level(local_ref, lat, lon, 1.0)
+    if np.isfinite(nearby):
+        out["nearby_avg_price_level"] = float(nearby)
+
+    u_level: Optional[int] = None
+    if price_level is not None and 1 <= int(price_level) <= 4:
+        u_level = int(price_level)
+    elif price_per_person is not None and float(price_per_person) > 0:
+        u_level = _ppp_to_price_level(float(price_per_person))
+    if u_level is not None and out.get("nearby_avg_price_level") is not None:
+        gap = float(u_level) - float(out["nearby_avg_price_level"])
+        out["price_gap"] = float(gap)
+        ad = abs(gap)
+        if ad <= 0.5:
+            out["price_fit"] = "good"
+        elif ad <= 1.25:
+            out["price_fit"] = "medium"
+        else:
+            out["price_fit"] = "poor"
+
+    csc = 0.0
+    if "count_same_cat_0.5km" in live_df.columns:
+        v = live_df["count_same_cat_0.5km"].iloc[0]
+        csc = float(v) if pd.notna(v) else 0.0
+    if csc > 10:
+        out["risk"]["competition"] = "high"
+    elif csc > 4:
+        out["risk"]["competition"] = "medium"
+    else:
+        out["risk"]["competition"] = "low"
+    out["risk"]["location"] = "low" if inside_hull else "high"
+    pf = out.get("price_fit")
+    if isinstance(pf, str) and pf in ("good", "medium", "poor"):
+        out["risk"]["price"] = {"good": "low", "medium": "medium", "poor": "high"}[pf]
+    else:
+        out["risk"]["price"] = "unknown"
+
+    comp_score = min(1.0, csc / 20.0)
+    price_part = 0.5
+    if out.get("price_fit") == "good":
+        price_part = 1.0
+    elif out.get("price_fit") == "medium":
+        price_part = 0.65
+    elif out.get("price_fit") == "poor":
+        price_part = 0.35
+    sc = (
+        0.5 * float(survival_probability)
+        + 0.2 * (float(predicted_stars) / 5.0)
+        + 0.2 * (1.0 - comp_score)
+        + 0.1 * price_part
+    )
+    out["business_score"] = round(100.0 * max(0.0, min(1.0, sc)), 1)
+
+    parts: list[str] = [
+        f"Estimated still-open probability is about {survival_probability:.0%}; predicted rating is about {predicted_stars:.1f} stars.",
+    ]
+    if inside_hull:
+        parts.append("The pin is inside the training reference hull; spatial extrapolation risk is relatively low.")
+    else:
+        parts.append("The pin is outside the training hull; interpret scores cautiously.")
+    if csc > 8:
+        parts.append("Same-category density within 0.5 km is high; competition is relatively strong.")
+    elif csc < 2:
+        parts.append("Same-category density within 0.5 km is sparse.")
+    if u_level is not None and out.get("price_gap") is not None and out.get("nearby_avg_price_level") is not None:
+        parts.append(
+            f"Your price tier is about {u_level}; mean training price tier within 1 km is about "
+            f"{out['nearby_avg_price_level']:.1f} (gap {out['price_gap']:+.1f} tiers); local match: {out.get('price_fit', 'n/a')}."
+        )
+    out["explanation"] = " ".join(parts)
+    return out
 
 
 def _reference_lonlat_xy(local_ref: pd.DataFrame) -> np.ndarray:
@@ -399,15 +639,19 @@ def _list_merchant_spatial_cities_cached(
     df["city"] = df["city"].astype(str).str.strip()
     df["state"] = df["state"].fillna("").astype(str).str.strip().str.upper()
     df = df[df["city"].str.len() > 0]
+    # Merge same (state) groups whose city labels differ only by spaces/case; avoid duplicate city rows
+    # (e.g. two "Santa Barbara" rows where one has a single training point).
+    df["city"] = df["city"].str.replace(r"\s+", " ", regex=True)
     df["lat"] = pd.to_numeric(df["latitude"], errors="coerce")
     df["lon"] = pd.to_numeric(df["longitude"], errors="coerce")
-    df["_city_l"] = df["city"].str.lower()
+    df["_city_l"] = df["city"].map(_city_group_key_spatial)
     out: list[tuple[str, str, int, float, float]] = []
     for (_cl, st), sub in df.groupby(["_city_l", "state"], sort=False):
         n = int(len(sub))
         if n < min_rows:
             continue
-        disp = str(sub["city"].iloc[0]).strip()
+        ccol = sub["city"].astype(str).str.strip()
+        disp = str(ccol.value_counts().index[0]) if len(ccol) else ""
         lat_m = float(np.nanmean(sub["lat"].to_numpy(dtype=float)))
         lon_m = float(np.nanmean(sub["lon"].to_numpy(dtype=float)))
         if not (np.isfinite(lat_m) and np.isfinite(lon_m)):
@@ -421,7 +665,7 @@ def _list_merchant_spatial_cities_cached(
 def list_merchant_spatial_cities(
     repo_root: Optional[Path] = None,
     *,
-    min_rows: int = 10,
+    min_rows: int = SPATIAL_CITY_MIN_TRAIN_ROWS,
 ) -> list[dict[str, Any]]:
     root = resolve_repo_root(repo_root)
     rows = _list_merchant_spatial_cities_cached(str(root.resolve()), int(min_rows))
@@ -478,6 +722,29 @@ def get_merchant_coverage(
     center_lat = float(xy[:, 1].mean())
 
     ring = convex_hull_closed_ring_lonlat(xy)
+    if ring is None and n > 0:
+        # Collinear or too few points: hull fails; use a padded bbox so the map still has an extent
+        pad = 0.003
+        w = max_lon - min_lon
+        h = max_lat - min_lat
+        if w < 1e-6:
+            min_lon, max_lon = min_lon - pad, max_lon + pad
+        else:
+            min_lon, max_lon = min_lon - pad * 0.5, max_lon + pad * 0.5
+        if h < 1e-6:
+            min_lat, max_lat = min_lat - pad, max_lat + pad
+        else:
+            min_lat, max_lat = min_lat - pad * 0.5, max_lat + pad * 0.5
+        ring = np.array(
+            [
+                [min_lon, min_lat],
+                [max_lon, min_lat],
+                [max_lon, max_lat],
+                [min_lon, max_lat],
+                [min_lon, min_lat],
+            ],
+            dtype=float,
+        )
     hull_f = _geojson_polygon_feature(ring) if ring is not None else None
     sample_f = _geojson_sample_points_feature(xy, max_sample_points)
 
@@ -497,6 +764,104 @@ def get_merchant_coverage(
     }
 
 
+def predict_merchant_heatmap(
+    *,
+    city: Optional[str],
+    state: Optional[str],
+    selected_category_columns: list[str],
+    grid_size: int,
+    repo_root: Optional[Path] = None,
+    max_rows_if_no_city: int = 2000,
+    price_level: Optional[int] = None,
+    price_per_person: Optional[float] = None,
+) -> MerchantHeatmapResult:
+    """
+    Macro scores on a lat/lon grid (same slice as /merchant/predict). Cells outside the training hull
+    are omitted (null) when a hull exists; if no hull, the full bbox is filled.
+    """
+    root = resolve_repo_root(repo_root)
+    global_ref = load_spatial_reference(root)
+    local_ref, city_used = slice_local_reference(
+        global_ref, city, max_rows_if_no_city=max_rows_if_no_city, state=state
+    )
+    if len(local_ref) < 10:
+        raise ValueError("Too few reference businesses (<10). Try another city or check train_spatial.csv.")
+    if not selected_category_columns:
+        raise ValueError("selected_category_columns must be non-empty")
+
+    xy_ref = _reference_lonlat_xy(local_ref)
+    hull_ring = convex_hull_closed_ring_lonlat(xy_ref)
+    min_lon_f, min_lat_f = float(xy_ref[:, 0].min()), float(xy_ref[:, 1].min())
+    max_lon_f, max_lat_f = float(xy_ref[:, 0].max()), float(xy_ref[:, 1].max())
+
+    n = max(4, min(16, int(grid_size)))
+    lat_edges = np.linspace(min_lat_f, max_lat_f, n + 1)
+    lon_edges = np.linspace(min_lon_f, max_lon_f, n + 1)
+    lat_centers = (lat_edges[:-1] + lat_edges[1:]) / 2.0
+    lon_centers = (lon_edges[:-1] + lon_edges[1:]) / 2.0
+
+    keys_t = tuple(selected_category_columns)
+    rows_bs: list[list[Optional[float]]] = []
+    rows_bsm: list[list[Optional[float]]] = []
+    rows_sv: list[list[Optional[float]]] = []
+    rows_st: list[list[Optional[float]]] = []
+
+    def _in_hull(lo: float, la: float) -> bool:
+        if hull_ring is None:
+            return True
+        return point_in_hull_ring(lo, la, hull_ring)
+
+    for i in range(n):
+        r_bs: list[Optional[float]] = []
+        r_bsm: list[Optional[float]] = []
+        r_sv: list[Optional[float]] = []
+        r_st: list[Optional[float]] = []
+        for j in range(n):
+            la = float(lat_centers[i])
+            lo = float(lon_centers[j])
+            if not _in_hull(lo, la):
+                r_bs.append(None)
+                r_bsm.append(None)
+                r_sv.append(None)
+                r_st.append(None)
+                continue
+            r = predict_merchant_site(
+                city=city,
+                state=state,
+                lat=la,
+                lon=lo,
+                selected_category_columns=selected_category_columns,
+                repo_root=root,
+                max_rows_if_no_city=max_rows_if_no_city,
+                reference_df=local_ref,
+                price_level=price_level,
+                price_per_person=price_per_person,
+            )
+            r_bs.append(r.business_score)
+            r_bsm.append(r.business_score_ml)
+            r_sv.append(r.survival_probability)
+            r_st.append(r.predicted_stars)
+        rows_bs.append(r_bs)
+        rows_bsm.append(r_bsm)
+        rows_sv.append(r_sv)
+        rows_st.append(r_st)
+
+    return MerchantHeatmapResult(
+        city_filter=city_used,
+        reference_row_count=len(local_ref),
+        grid_size=n,
+        min_lat=min_lat_f,
+        max_lat=max_lat_f,
+        min_lon=min_lon_f,
+        max_lon=max_lon_f,
+        resolved_category_keys=keys_t,
+        business_score=tuple(tuple(row) for row in rows_bs),
+        business_score_ml=tuple(tuple(row) for row in rows_bsm),
+        survival_probability=tuple(tuple(row) for row in rows_sv),
+        predicted_stars=tuple(tuple(row) for row in rows_st),
+    )
+
+
 def predict_merchant_site(
     *,
     city: Optional[str],
@@ -507,10 +872,13 @@ def predict_merchant_site(
     max_rows_if_no_city: int = 2000,
     reference_df: Optional[pd.DataFrame] = None,
     state: Optional[str] = None,
+    price_level: Optional[int] = None,
+    price_per_person: Optional[float] = None,
 ) -> MerchantPredictResult:
     """
-    :param reference_df: 若传入（例如调用方已按城市筛好的子表），则不再从 CSV 切片，
-        此时 ``city`` 仅用于展示 ``city_filter``。
+    :param reference_df: If provided (e.g. pre-filtered by city), skip CSV slicing; ``city`` is only ``city_filter``.
+    :param price_level: Optional Yelp-style tier 1–4; omit with ``price_per_person`` or use neither.
+    :param price_per_person: Optional USD-ish per person; mapped to 1–4 and compared to local mean tier.
     """
     root = resolve_repo_root(repo_root)
     if reference_df is not None:
@@ -614,6 +982,23 @@ def predict_merchant_site(
         except (TypeError, ValueError):
             continue
 
+    decision = _build_merchant_decision_support(
+        live_df=live_df,
+        local_ref=local_ref,
+        inside_hull=inside_hull,
+        survival_probability=surv_prob,
+        predicted_stars=stars,
+        lat=float(lat),
+        lon=float(lon),
+        price_level=price_level,
+        price_per_person=price_per_person,
+    )
+
+    try:
+        biz_ml = _predict_business_score_ml(live_df, root)
+    except Exception:
+        biz_ml = None
+
     return MerchantPredictResult(
         survival_probability=surv_prob,
         predicted_stars=stars,
@@ -622,14 +1007,21 @@ def predict_merchant_site(
         metrics=metrics,
         live_feature_preview=preview,
         inside_reference_hull=inside_hull,
+        price_fit=decision.get("price_fit"),
+        price_gap=decision.get("price_gap"),
+        nearby_avg_price_level=decision.get("nearby_avg_price_level"),
+        risk=decision.get("risk") or {},
+        explanation=str(decision.get("explanation") or ""),
+        business_score=decision.get("business_score"),
+        business_score_ml=biz_ml,
     )
 
 
 def predict_merchant_site_safe(
     **kwargs: Any,
 ) -> Tuple[Optional[MerchantPredictResult], Optional[str]]:
-    """返回 (结果, 错误信息)。"""
+    """Return (result, error_message)."""
     try:
         return predict_merchant_site(**kwargs), None
-    except Exception as ex:  # noqa: BLE001 — 边界 API 聚合错误
+    except Exception as ex:  # noqa: BLE001 — API boundary: aggregate as string
         return None, str(ex)

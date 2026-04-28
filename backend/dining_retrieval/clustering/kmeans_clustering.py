@@ -1,5 +1,5 @@
 """
-K-Means clustering helpers (mirrors notebooks/kmeans.ipynb); 供 notebook 或后续前端复用。
+K-Means clustering helpers (mirrors notebooks/kmeans.ipynb); reusable from notebooks or the client later.
 """
 from __future__ import annotations
 

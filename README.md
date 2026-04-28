@@ -19,8 +19,8 @@ commercial-dining-intelligence/
 │   └── ...
 ├── pipelines/                  # Cleaning, feature engineering, spatial feature engineering
 ├── models/                     # Training scripts, artifacts path conventions
-├── notebooks/                  # EDA and experiments
-├── scripts/                    # setup, run_api, ETL, manifest, export_openapi
+├── notebooks/                  # EDA and experiments (some `.ipynb` cells may still be bilingual/legacy Chinese)
+├── scripts/                    # setup_env, run_api, ETL, manifest, export_openapi, spatial_train_diagnostics
 ├── docs/                       # Migration/refactor plans only (see below); project overview TBD
 ├── pytest.ini                  # Sets pythonpath for pytest (includes backend)
 ├── package.json                # Root-level only — forwards npm scripts to frontend/
@@ -43,6 +43,23 @@ Due to the massive size of the Yelp Open Dataset, raw and cleaned data files are
 **2. Place it in the Repo:**
 * Move the downloaded files directly into the `data/processed_csv/` folder. Do not force-add data files to Git.
 
+**3. `train_spatial.csv` (merchant city list + reference slice for predict, and tourist city list):**  
+The **browser never loads** this file; the **API** reads `data/train_spatial.csv` (or `train_spatial.csv` at the repo root). If you have `data/data.zip` from the team bundle, generate the full file with:
+
+```bash
+chmod +x scripts/extract_train_spatial_from_zip.sh
+./scripts/extract_train_spatial_from_zip.sh
+```
+
+Then restart the API. Without this, `/api/v1/merchant/cities` row counts reflect whatever partial CSV is on disk.
+
+Optional checks (same city keys as the API):
+
+```bash
+PYTHONPATH=backend:. python scripts/spatial_train_diagnostics.py rows --city Abington --state PA
+PYTHONPATH=backend:. python scripts/spatial_train_diagnostics.py threshold
+```
+
 ## 🚀 Setup Environment
 
 We use `uv` for lightning-fast dependency management. To run this project locally, please follow these steps from the root directory of the project:
@@ -54,11 +71,10 @@ This script will install `uv` (if necessary), create a virtual environment (`.ve
 source scripts/setup_env.sh
 ```
 
-**2. Activate Environment (Run every time you code):**
-Whenever you open a new terminal session to work on this project, activate the environment by running:
+**2. Activate environment (every new terminal):**
 
 ```bash
-source scripts/activate_env.sh
+source .venv/bin/activate
 ```
 
 If you do not want to use `uv`, you can also install dependencies with pip:
@@ -84,6 +100,10 @@ pip install -r requirements.txt   # includes fastapi / uvicorn
 - OpenAPI docs: `http://localhost:8000/docs`
 - Optional env vars: `API_REPO_ROOT` (repo root), `CORS_ORIGINS` (comma-separated, defaults to `*`)
 - Docker: `docker build -f Dockerfile.api -t cdi-api .` (mount `data/` and `models/artifacts/`)
+
+**Merchant predict / `PCG64 is not a known BitGenerator`:** The survival/rating `.pkl` files under `models/artifacts/` are tied to the NumPy version used when they were saved. If your venv has NumPy 1.26 but the files were produced with NumPy 2 (or the reverse), loading fails. Either upgrade NumPy to match the artifacts (`pip install -U "numpy>=2.0,<3" "scikit-learn>=1.4"`) and restart the API, or stay on NumPy 1.26 and regenerate the models in this venv: `PYTHONPATH=backend:. python models/merchant_predictor.py` (requires training CSVs under `data/` as in `models/merchant_predictor.py`).
+
+**Business score V1 vs ML (V2):** `business_score` is the rule-based composite. Optional `business_score_ml` is a supervised score (probability of still-open times 100) from spatial and category features trained on `is_open`, without using survival or rating model outputs as features (avoids circular supervision). Build the artifact with `python models/train_business_score_ml.py` (expects `data/train_merchant_split.csv`). Health reports `business_score_ml_pkl` when `models/artifacts/business_score_ml.pkl` is present.
 
 Development and contract test dependencies: `pip install -r requirements-dev.txt`
 

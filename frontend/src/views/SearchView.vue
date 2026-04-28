@@ -8,6 +8,7 @@ import {
   getMerchantCoverage,
   getStates,
   postSearch,
+  SPATIAL_CITY_MIN_TRAIN_ROWS,
   type MerchantCityRow,
   type SearchActionEvent,
   type SearchRequest,
@@ -30,38 +31,28 @@ const browseCity = ref("");
 const cityRows = ref<MerchantCityRow[]>([]);
 const citiesLoading = ref(false);
 
-// Tourist retrieval index is intentionally scoped to a small set of city/state combos.
-// Keep the UI city list aligned with backend `backend/dining_retrieval/core/index_cities.py`
-// to avoid "selectable but empty" cities.
-const TOURIST_INDEX_ALLOWED: ReadonlySet<string> = new Set([
-  "philadelphia|PA",
-  "tampa|FL",
-  "indianapolis|IN",
-  "tucson|AZ",
-  "nashville|TN",
-  "new orleans|LA",
-  "edmonton|AB",
-  "saint louis|MO",
-  "st. louis|MO",
-  "reno|NV",
-  "santa barbara|CA",
-  "boise|ID",
-]);
+/** Aligns with backend `_city_group_key_spatial` (dedupe e.g. duplicate Santa Barbara rows). */
+function _normCity(city: string): string {
+  const t = String(city ?? "")
+    .trim()
+    .replace(/\s+/g, " ");
+  return t.normalize("NFKC").toLowerCase();
+}
 
 function _ck(city: string, state: string): string {
-  return `${city.trim().toLowerCase()}|${state.trim().toUpperCase()}`;
+  return `${_normCity(city)}|${state.trim().toUpperCase()}`;
 }
 
 function cleanCityRows(rows: MerchantCityRow[]): MerchantCityRow[] {
-  // Filter to allowed set and de-dupe by (city,state), keeping the row with max row_count.
+  // Dedupe by normalized (city, state); keep the row with largest row_count
   const best = new Map<string, MerchantCityRow>();
   for (const r of rows) {
     const city = String(r.city ?? "").trim();
     const state = String(r.state ?? "").trim().toUpperCase();
     if (!city || !state) continue;
     if (Number(r.row_count) <= 0) continue;
+    if (Number(r.row_count) < SPATIAL_CITY_MIN_TRAIN_ROWS) continue;
     const key = _ck(city, state);
-    if (!TOURIST_INDEX_ALLOWED.has(key)) continue;
     const prev = best.get(key);
     if (!prev || Number(r.row_count) > Number(prev.row_count)) best.set(key, r);
   }
@@ -184,7 +175,10 @@ onMounted(async () => {
   window.addEventListener("keydown", onGlobalKey);
   citiesLoading.value = true;
   try {
-    const [st, mc] = await Promise.allSettled([getStates(), getMerchantCities({ min_rows: 1 })]);
+    const [st, mc] = await Promise.allSettled([
+      getStates(),
+      getMerchantCities({ min_rows: SPATIAL_CITY_MIN_TRAIN_ROWS }),
+    ]);
     if (st.status === "fulfilled") {
       const r = st.value;
       states.value = r.states.length ? r.states : ["PA"];
@@ -625,7 +619,7 @@ async function refreshTouristMapCoverage() {
     } else {
       const match = cityRows.value.find((r) => {
         if ((r.state ?? "").trim().toUpperCase() !== st) return false;
-        if (city) return r.city === city;
+        if (city) return _normCity(String(r.city)) === _normCity(city);
         return true;
       });
       if (match) {
@@ -636,7 +630,7 @@ async function refreshTouristMapCoverage() {
     mapCoverageError.value = e instanceof Error ? e.message : String(e);
     const row = cityRows.value.find((r) => {
       if ((r.state ?? "").trim().toUpperCase() !== st) return false;
-      if (city) return r.city === city;
+      if (city) return _normCity(String(r.city)) === _normCity(city);
       return true;
     });
     if (row) {
@@ -652,7 +646,8 @@ async function initTouristMap() {
   await nextTick();
   if (!tourMapEl.value) return;
   destroyTouristMap();
-  lmap = L.map(tourMapEl.value, { preferCanvas: true, scrollWheelZoom: true });
+  // preferCanvas can skip polygon/hole layers in some browsers; use SVG for range overlay
+  lmap = L.map(tourMapEl.value, { preferCanvas: false, scrollWheelZoom: true });
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
@@ -798,14 +793,25 @@ function resetFeedback() {
             <option v-for="s in states" :key="s" :value="s">{{ s }}</option>
           </select>
           <label class="lbl">City</label>
-          <p class="inp inp--display">{{ browseCity || '—' }}</p>
+          <select
+            v-model="browseCity"
+            class="inp"
+            :disabled="loading || citiesLoading || !citiesInState.length"
+          >
+            <option v-if="!citiesInState.length" disabled value="">
+              {{ citiesLoading ? "Loading…" : "No cities in this state" }}
+            </option>
+            <option v-for="r in citiesInState" :key="`${r.state}|${r.city}`" :value="r.city">
+              {{ r.city }}
+            </option>
+          </select>
 
           <label class="lbl">Current Location (for distance ranking)</label>
           <input
             v-model="userLocation"
             class="inp"
             type="text"
-            placeholder="e.g. 21 Flushing Ave, Brooklyn, NY"
+            placeholder="santa barbara"
             :disabled="loading"
           />
 
@@ -828,7 +834,7 @@ function resetFeedback() {
               v-model="nlQuery"
               class="inp area"
               rows="3"
-              placeholder="e.g. affordable sushi near NYU, within 3 km"
+              placeholder="fine dining in philadelphia"
             />
             <span class="lbl">Cuisines</span>
             <p v-if="nlQueryLocksCuisines" class="hint hint-cuisine-lock">

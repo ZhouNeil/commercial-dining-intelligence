@@ -213,10 +213,11 @@ __marimo__/
 # Ignore all raw and processed data files
 data/*.csv
 data/*.json
+data/*.zip
 data/*.parquet
 data/processed_csv/*
 
-# 本地生成的数据 manifest（`python scripts/write_data_manifest.py`）
+# Local generated data manifest (`python scripts/write_data_manifest.py`)
 data/manifests/active.json
 
 # Stratified slice (not in repo; regenerate: python scripts/build_representative_slice.py)
@@ -245,3 +246,5 @@ data/saved_models/*
 train_spatial.csv
 test_spatial.csv
 node_modules/
+# Vite prebundle cache (local dev)
+frontend/.vite/
