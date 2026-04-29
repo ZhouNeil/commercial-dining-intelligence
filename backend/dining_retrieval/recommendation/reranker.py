@@ -10,12 +10,9 @@ from dining_retrieval.core.retrieval import RestaurantSearchIndex
 from dining_retrieval.recommendation.preference_state import UserPreferenceState
 
 
-def _row_index_for_business_id(index: RestaurantSearchIndex, business_id: str) -> Optional[int]:
-    bids = index.restaurant_ids
-    for i, rid in enumerate(bids):
-        if str(rid) == str(business_id):
-            return int(i)
-    return None
+def _build_bid_to_row(index: RestaurantSearchIndex) -> dict[str, int]:
+    """Build a O(1) lookup from business_id string to row index in the index matrix."""
+    return {str(rid): i for i, rid in enumerate(index.restaurant_ids)}
 
 
 def _cosine_rows(M: csr_matrix, norms: np.ndarray, i: int, j: int) -> float:
@@ -34,11 +31,11 @@ def _avg_sim_to_businesses(
     norms: np.ndarray,
     row_i: int,
     target_business_ids: list[str],
-    index: RestaurantSearchIndex,
+    bid_to_row: dict[str, int],
 ) -> float:
     sims: list[float] = []
     for bid in target_business_ids:
-        j = _row_index_for_business_id(index, bid)
+        j = bid_to_row.get(str(bid))
         if j is None:
             continue
         sims.append(_cosine_rows(M, norms, row_i, j))
@@ -117,12 +114,13 @@ def rerank_pool(
     pool_df must include `business_id` and columns used by preference heuristics.
     """
     if pool_df.empty or "business_id" not in pool_df.columns:
-        return pool_df.copy()
+        return pool_df
 
     out = pool_df.copy()
     n = len(out)
     M = index.restaurant_matrix
     norms = index.restaurant_norms
+    bid_to_row = _build_bid_to_row(index)
 
     base = pd.to_numeric(out["final_score"], errors="coerce").to_numpy(dtype=float)
     base = np.nan_to_num(base, nan=0.0)
@@ -130,16 +128,16 @@ def rerank_pool(
 
     sim_liked = np.zeros(n, dtype=float)
     sim_disliked = np.zeros(n, dtype=float)
-    row_indices: list[Optional[int]] = []
-    for bid in out["business_id"].astype(str).tolist():
-        row_indices.append(_row_index_for_business_id(index, bid))
+    row_indices: list[Optional[int]] = [
+        bid_to_row.get(bid) for bid in out["business_id"].astype(str).tolist()
+    ]
 
     if pref.liked_business_ids:
         for i in range(n):
             ri = row_indices[i]
             if ri is None:
                 continue
-            sim_liked[i] = _avg_sim_to_businesses(M, norms, ri, pref.liked_business_ids, index)
+            sim_liked[i] = _avg_sim_to_businesses(M, norms, ri, pref.liked_business_ids, bid_to_row)
         sim_liked = _minmax(sim_liked)
     else:
         sim_liked = np.zeros(n, dtype=float)
@@ -150,7 +148,7 @@ def rerank_pool(
             if ri is None:
                 continue
             sim_disliked[i] = _avg_sim_to_businesses(
-                M, norms, ri, pref.disliked_business_ids, index
+                M, norms, ri, pref.disliked_business_ids, bid_to_row
             )
         sim_disliked = _minmax(sim_disliked)
     else:

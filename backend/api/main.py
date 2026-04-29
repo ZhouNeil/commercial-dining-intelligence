@@ -35,6 +35,7 @@ from services.merchant_inference import (
     spatial_train_csv_path,
 )
 from services.retrieval_service import RetrievalSearchService
+from api.utils import normalize_state
 
 API_VERSION = "0.1.0"
 
@@ -102,7 +103,7 @@ def merchant_predict(body: MerchantPredictRequest) -> MerchantPredictResponse:
             keys = resolve_merchant_category_text(
                 q,
                 city=body.city,
-                state=body.state.strip().upper() if body.state and str(body.state).strip() else None,
+                state=normalize_state(body.state),
                 max_rows_if_no_city=body.max_rows_if_no_city,
                 repo_root=_repo,
             )
@@ -112,7 +113,7 @@ def merchant_predict(body: MerchantPredictRequest) -> MerchantPredictResponse:
             sugg = suggest_merchant_category_text(
                 q,
                 city=body.city,
-                state=body.state.strip().upper() if body.state and str(body.state).strip() else None,
+                state=normalize_state(body.state),
                 max_rows_if_no_city=body.max_rows_if_no_city,
                 repo_root=_repo,
                 limit=8,
@@ -178,7 +179,7 @@ def merchant_categories(
     try:
         keys = list_merchant_category_keys(
             city=city,
-            state=state.strip().upper() if state and str(state).strip() else None,
+            state=normalize_state(state),
             max_rows_if_no_city=max_rows_if_no_city,
             repo_root=_repo,
         )
@@ -200,7 +201,7 @@ def merchant_categories_resolve(
     max_rows_if_no_city: int = Query(2000, ge=100, le=50000),
 ) -> MerchantCategoriesResponse:
     try:
-        st = state.strip().upper() if state and str(state).strip() else None
+        st = normalize_state(state)
         keys = resolve_merchant_category_text(
             q,
             city=city,
