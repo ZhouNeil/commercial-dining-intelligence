@@ -20,8 +20,8 @@ onMounted(async () => {
       <p class="eyebrow">Commercial dining intelligence</p>
       <h1>Pick a table worth the trip</h1>
       <p class="lede">
-        Semantic search over reviews, multi-signal ranking, and optional bandit tuning. Start the API
-        first: <code>./scripts/run_api.sh</code> (port 8000).
+        Semantic search over restaurant reviews with multi-signal ranking and personalized re-ranking.
+        Discover great spots as a tourist or predict site viability as a merchant.
       </p>
       <div class="cta-row">
         <router-link class="btn btn-primary" to="/search">Discover restaurants</router-link>

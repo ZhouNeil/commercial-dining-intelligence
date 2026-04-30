@@ -1,6 +1,32 @@
 # Dual-Mode Commercial & Dining Intelligence App
 
-This repository contains the codebase for our Machine Learning course final project. The application utilizes the Yelp Open Dataset to provide insights for both prospective merchants and tourists.
+## What This App Does
+
+This is a full-stack machine learning application that serves two distinct user types from the Yelp Open Dataset:
+
+**For tourists and diners** — type a natural-language query (e.g. "cozy Italian near downtown" or "fast cheap sushi") and get ranked restaurant recommendations for a chosen city. Results are re-ranked in real time based on likes and dislikes, and a contextual bandit (UCB) adapts the ranking strategy to the detected intent of your query (quick meal vs. romantic dinner vs. general search).
+
+**For prospective restaurant owners** — pick a city, enter your planned restaurant type in plain English, and click a location on the map. The app predicts the survival probability (likelihood the business stays open) and expected star rating at that location, using spatial features engineered from the surrounding competitive landscape.
+
+The application is built on a FastAPI backend with a Vue 3 frontend, and all ML models are trained on the real Yelp Open Dataset (~150k+ businesses, millions of reviews).
+
+---
+
+## Dataset and Task Meaningfulness
+
+**Dataset:** The [Yelp Open Dataset](https://www.yelp.com/dataset) is a well-established, real-world benchmark containing over 150,000 businesses, 7 million reviews, and rich business attributes (hours, categories, price range, amenities). The data is used directly — not synthetically generated — and covers major US and Canadian cities.
+
+**Why these tasks are non-trivial:**
+
+*Tourist search:* Simple keyword search over restaurant names fails to capture semantics. "Cozy Italian" should match review language about ambiance and cuisine, not just business names. Our TF-IDF retrieval operates over aggregated review text (up to 20 reviews per business, 50k features), so results reflect what customers actually said rather than just business metadata. The RL re-ranking layer means the system adapts to implicit feedback (likes, passes, query intent) rather than serving a static ranked list.
+
+*Merchant site prediction:* Predicting whether a restaurant will survive at a given location is genuinely hard. Location alone (lat/lon) is not sufficient — what matters is the competitive density, distance to the nearest same-category competitor, category diversity in the surrounding area, and price positioning. We engineer these spatial features using a BallTree over the reference dataset, then train separate HistGradientBoosting models for survival (binary classifier) and star rating (regressor). The ablation study confirms that spatial features provide measurable lift over naive baselines.
+
+These are questions real users face — "where should I eat tonight?" and "is this a good location to open my restaurant?" — and the ML approach meaningfully outperforms what a user could do with a basic Yelp search.
+
+---
+
+This repository contains the codebase for our Machine Learning course final project.
 
 ## 📂 Repository Structure
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-写入 data/manifests/active.json：登记关键数据/模型文件的相对路径、大小、mtime；
-小于 20MB 的文件额外计算 sha256（大 CSV 跳过哈希以节省时间）。
+Writes data/manifests/active.json: records relative paths, sizes, and mtimes for key data/model files.
+Files under 20MB also get a sha256 checksum (large CSVs skip hashing to save time).
 
-用法（仓库根目录）：
+Usage (from repo root):
   python scripts/write_data_manifest.py
 """
 from __future__ import annotations

@@ -1,5 +1,5 @@
 """
-检索服务薄封装：TouristRetrieval + parse_query（与前端 `/search` 请求体一致）。
+Thin service wrapper around TouristRetrieval + parse_query, aligned with the frontend `/search` request body.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from dining_retrieval.core.yelp_photos import (
 from dining_retrieval.search.query_parser import ParsedQuery, extract_budget_hint, parse_query
 from dining_retrieval.core.geocoder import geocode_address
 
-# 无 Yelp photo_id 时的占位图（与前端 @error 回退使用同一组，便于一致）
+# Fallback images used when no Yelp photo_id is available (same set as the frontend @error fallback).
 _FALLBACK_FOOD_IMAGES: tuple[str, ...] = (
     "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=320&h=200&fit=crop&q=80",
     "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=320&h=200&fit=crop&q=80",
@@ -105,7 +105,7 @@ def _strategy_label(arm_name: Optional[str], intent_name: Optional[str]) -> str:
 
 class RetrievalSearchService:
     def __init__(self, repo_root: Optional[Path] = None):
-        # backend/services/... → 仓库根
+        # backend/services/... → repo root
         self.repo_root = (repo_root or Path(__file__).resolve().parents[2]).resolve()
         self._retrieval = TouristRetrieval(
             data_dir=self.repo_root / "data" / "cleaned",
@@ -285,8 +285,8 @@ class RetrievalSearchService:
         rl_action_events: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
-        对齐前端流程：Discover（泛检索）或 Refine（NL + 菜系 + 权重 + pool），
-        可选根据 👍/👎 在候选池内 v2 重排。
+        Aligned with the frontend flow: Discover (broad retrieval) or Refine (NL + cuisines + weights + pool),
+        with optional v2 re-ranking within the candidate pool based on likes/dislikes.
         """
         index = self.load_index(force_rebuild=force_rebuild_index)
         semantic_state_note = ""

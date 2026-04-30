@@ -1,1 +1,1 @@
-"""与 UI 解耦的业务服务层（重构 P1）。"""
+"""Business service layer, decoupled from the UI."""

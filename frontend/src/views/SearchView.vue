@@ -863,10 +863,6 @@ function resetFeedback() {
           <p class="hint">
             Maps to backend multi-signal <code>final_score</code>. Drag the gutter to resize this panel.
           </p>
-          <label class="chk"
-            ><input v-model="forceRebuild" type="checkbox" /> Force rebuild TF-IDF index</label
-          >
-
           <div class="rng">
             <div class="rng-h">
               <span>Semantic (text)</span>
@@ -1012,20 +1008,14 @@ function resetFeedback() {
         <div class="results-head">
           <div class="results-head-text">
             <h2>Places for you</h2>
-            <p class="sub">{{ metaPool }}</p>
             <p v-if="rlBadgeText" class="rl-badge">{{ rlBadgeText }}</p>
           </div>
           <div class="results-tools">
             <button type="button" class="btn-ghost" :disabled="loading || !lastMode" @click="refreshResults">
-              New bandit draw
+              Shuffle results
             </button>
             <button type="button" class="btn-ghost" @click="resetFeedback">Clear likes / passes</button>
           </div>
-          <details v-if="metaParsed" class="json-details">
-            <summary>Parsed query</summary>
-            <pre class="json-pre">{{ JSON.stringify(metaParsed, null, 2) }}</pre>
-            <p v-if="resolvedQueryText" class="qt">query_text: <code>{{ resolvedQueryText }}</code></p>
-          </details>
         </div>
 
         <ul class="card-list">
@@ -1059,8 +1049,7 @@ function resetFeedback() {
                 </p>
                 <p class="r-dim">
                   {{ fmtPriceTier((row as Record<string, unknown>).price_tier) }} ·
-                  {{ distLabel(row as Record<string, unknown>) }} ·
-                  {{ scoreLine(row as Record<string, unknown>) }}
+                  {{ distLabel(row as Record<string, unknown>) }}
                 </p>
               </div>
               <div

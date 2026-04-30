@@ -1,6 +1,6 @@
 """
-多维评分预测：数据清理、列展开、基于评论关键词的弱监督 aspect 目标。
-与 docs/multid.md 对齐；供 notebooks/multi/multid.ipynb 逐步验证使用。
+Multi-dimensional rating prediction: data cleaning, column expansion, and weakly supervised aspect targets
+derived from review keywords. Aligned with docs/multid.md; used for step-by-step validation in notebooks/multi/multid.ipynb.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 # ---------------------------------------------------------------------------
-# 文档 4.2：关键词组（可扩展）
+# Aspect keyword groups (extensible)
 # ---------------------------------------------------------------------------
 ASPECT_KEYWORDS: dict[str, list[str]] = {
     "food": [
@@ -91,7 +91,7 @@ NEG_WORDS = frozenset(
     """.split()
 )
 
-# 尖锐差评词（词元匹配，突出服务/卫生/速度问题）
+# Harsh negative words (token match, highlights service/hygiene/speed issues)
 HARSH_WORDS: frozenset[str] = frozenset(
     """
     bad rude dirty slow terrible awful disgusting worst gross horrible nasty
@@ -99,7 +99,7 @@ HARSH_WORDS: frozenset[str] = frozenset(
     """.split()
 )
 
-# 投诉 / 强负面信号（子串匹配，小写）
+# Complaint / strong negative signals (substring match, lowercased)
 COMPLAINT_KEYWORDS: tuple[str, ...] = (
     "never again",
     "waste of money",
@@ -153,7 +153,7 @@ def parse_dict_field(raw: Any) -> dict[str, Any]:
 
 
 def _bool_from_yelp_val(v: Any) -> float:
-    """返回 1.0 True, 0.0 False, np.nan 未知"""
+    """Returns 1.0 for True, 0.0 for False, np.nan for unknown."""
     if v is None or v == "None":
         return np.nan
     if isinstance(v, bool):
@@ -187,7 +187,7 @@ def count_open_days(hours_raw: Any) -> float:
 
 
 def flatten_attributes_column(series: pd.Series) -> pd.DataFrame:
-    """展开常见 Yelp attributes 为数值/0-1 列。"""
+    """Expand common Yelp attributes into numeric / 0-1 columns."""
     price = series.map(extract_price_range)
     good_kids: list[float] = []
     takeout: list[float] = []
@@ -231,7 +231,7 @@ def flatten_attributes_column(series: pd.Series) -> pd.DataFrame:
 
 
 def expand_categories_column(series: pd.Series) -> pd.DataFrame:
-    """categories 逗号分隔 -> 列表长度、首类、拼接小写串（供后续向量化）。"""
+    """Expand comma-separated categories into count, primary category, and joined lowercase string (for vectorization)."""
     n_cats: list[int] = []
     primary: list[str] = []
     joined: list[str] = []
@@ -250,7 +250,7 @@ def expand_categories_column(series: pd.Series) -> pd.DataFrame:
 
 
 def clean_and_expand_business(df: pd.DataFrame) -> pd.DataFrame:
-    """基础清理 + 展开 attributes / categories / hours。"""
+    """Basic cleaning and expansion of attributes, categories, and hours columns."""
     out = df.copy()
     out = out.dropna(subset=["business_id", "stars"])
     out["business_id"] = out["business_id"].astype(str).str.strip()
@@ -314,19 +314,20 @@ def _harsh_review_any(text: str) -> bool:
 
 def star_interval_sample_weight(stars: Any) -> np.ndarray:
     """
-    按半星档位给训练样本权重：1.0/1.5/5.0 极端档最高，2.0/2.5/4.5 中等，3.0–4.0 中部默认。
-    stars 可为 Series 或 ndarray，元素为连续分亦可（先映射到最近半星再查表）。
+    Per-half-star sample weights: extremes (1.0/1.5/5.0) get the highest weight,
+    middle tiers (2.0/2.5/4.5) get moderate weight, center (3.0–4.0) gets the default.
+    stars can be a Series or ndarray; continuous values are rounded to the nearest half-star before lookup.
     """
     s = np.asarray(stars, dtype=float)
     idx = np.clip(np.round((s - 1.0) * 2).astype(int), 0, 8)
     w_table = np.array(
         [3.2, 3.2, 1.9, 1.9, 1.0, 1.0, 1.0, 1.9, 3.2], dtype=float
-    )  # 1.0 … 5.0 半星共 9 档
+    )  # 9 half-star bins from 1.0 to 5.0
     return w_table[idx]
 
 
 def _sentiment_score(text: str) -> float:
-    """粗粒度 -1~1，用于 aspect 句块与评论信号。"""
+    """Coarse-grained sentiment in [-1, 1], used for aspect blocks and review signals."""
     words = re.findall(r"[a-z]+", text.lower())
     pos = sum(1 for w in words if w in POS_WORDS)
     neg = sum(1 for w in words if w in NEG_WORDS)
@@ -340,8 +341,9 @@ def build_review_signal_features(
     business_overall: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    按店聚合评论级负面/投诉信号，缓解「只看结构化特征 → 回归均值」问题。
-    列：rev_neg_word_density, rev_complaint_hit_rate, rev_low_review_star_share,
+    Aggregate review-level negative/complaint signals per business, to reduce the regression-to-mean
+    problem caused by relying solely on structured features.
+    Output columns: rev_neg_word_density, rev_complaint_hit_rate, rev_low_review_star_share,
         rev_high_review_star_share, rev_mean_sentiment,
         rev_harsh_word_density, rev_harsh_review_share, rev_one_star_share,
         rev_max_neg_density, rev_neg_density_std
@@ -349,7 +351,7 @@ def build_review_signal_features(
     need = {"business_id", "text", "stars"}
     miss = need - set(reviews.columns)
     if miss:
-        raise ValueError(f"reviews 缺少列: {miss}")
+        raise ValueError(f"reviews missing columns: {miss}")
 
     all_ids = [str(x).strip() for x in business_overall["business_id"].tolist()]
     r = reviews.copy()
@@ -400,7 +402,7 @@ def build_review_signal_features(
 
 
 def sentiment_to_rating_1_5(s: float) -> float:
-    """将 [-1,1] 线性映射到 [1,5]。"""
+    """Linearly maps [-1, 1] to [1, 5]."""
     return float(np.clip(1.0 + 2.0 * (s + 1.0), 1.0, 5.0))
 
 
@@ -410,15 +412,15 @@ def build_weak_aspect_targets(
     min_reviews_for_aspect: int = 1,
 ) -> pd.DataFrame:
     """
-    弱监督 aspect 目标（文档 4.2）：
-    - 主信号：含该 aspect 关键词的评论的 stars 均值（1–5）
-    - 若无命中评论：回退到商户 overall stars
-    - 辅助：命中评论文本的情感映射到 1–5，与均值blend（可关）
+    Weakly supervised aspect targets:
+    - Primary signal: mean stars of reviews that contain aspect keywords (1–5)
+    - Fallback if no keyword matches: use the business's overall stars
+    - Auxiliary: blend mean_stars with sentiment-mapped score (0.7 / 0.3 ratio)
     """
     need = {"business_id", "text", "stars"}
     miss = need - set(reviews.columns)
     if miss:
-        raise ValueError(f"reviews 缺少列: {miss}")
+        raise ValueError(f"reviews missing columns: {miss}")
 
     r = reviews.copy()
     r["business_id"] = r["business_id"].astype(str).str.strip()
@@ -471,7 +473,7 @@ def verify_merge(
     business: pd.DataFrame,
     targets: pd.DataFrame,
 ) -> dict[str, Any]:
-    """Notebook 中打印，确认合并率与缺失。"""
+    """Prints merge rate and missing ID stats in the notebook."""
     b_ids = set(business["business_id"].astype(str))
     t_ids = set(targets["business_id"].astype(str))
     return {
@@ -486,7 +488,7 @@ def verify_weak_targets(
     business: pd.DataFrame,
     targets: pd.DataFrame,
 ) -> dict[str, float]:
-    """文档「验证」：aspect 与 overall 的相关性。"""
+    """Validation: correlation between each aspect target and overall stars."""
     m = business[["business_id", "stars"]].merge(targets, on="business_id", how="inner")
     out: dict[str, float] = {}
     y0 = m["stars"].astype(float)

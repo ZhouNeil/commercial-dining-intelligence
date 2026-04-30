@@ -34,7 +34,7 @@ class MerchantPredictResult:
 def resolve_repo_root(explicit: Optional[Path] = None) -> Path:
     if explicit is not None:
         return explicit.resolve()
-    # backend/services/... → 仓库根
+    # backend/services/... → repo root
     return Path(__file__).resolve().parents[2]
 
 
@@ -299,7 +299,7 @@ def _rating_model(repo_root_s: str):
 
 
 def clear_model_cache() -> None:
-    """测试或热重载时清空 joblib 单例缓存。"""
+    """Clear the joblib singleton cache for testing or hot-reload."""
     _survival_model.cache_clear()
     _rating_model.cache_clear()
     _list_merchant_spatial_cities_cached.cache_clear()
@@ -509,8 +509,8 @@ def predict_merchant_site(
     state: Optional[str] = None,
 ) -> MerchantPredictResult:
     """
-    :param reference_df: 若传入（例如调用方已按城市筛好的子表），则不再从 CSV 切片，
-        此时 ``city`` 仅用于展示 ``city_filter``。
+    :param reference_df: If provided (e.g. caller has already sliced by city), skips CSV slicing.
+        In that case ``city`` is used only for the ``city_filter`` display field.
     """
     root = resolve_repo_root(repo_root)
     if reference_df is not None:
@@ -628,8 +628,8 @@ def predict_merchant_site(
 def predict_merchant_site_safe(
     **kwargs: Any,
 ) -> Tuple[Optional[MerchantPredictResult], Optional[str]]:
-    """返回 (结果, 错误信息)。"""
+    """Returns (result, error_message). One of the two will be None."""
     try:
         return predict_merchant_site(**kwargs), None
-    except Exception as ex:  # noqa: BLE001 — 边界 API 聚合错误
+    except Exception as ex:  # noqa: BLE001 — boundary API: aggregate all errors into the error string
         return None, str(ex)

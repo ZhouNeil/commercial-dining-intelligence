@@ -175,7 +175,7 @@ export interface components {
         MerchantPredictRequest: {
             /**
              * City
-             * @description 过滤参考商户；为空则取表头前 N 行
+             * @description Filter reference merchants by city; if empty, uses the first N rows.
              */
             city?: string | null;
             /**
@@ -285,23 +285,23 @@ export interface components {
         };
         /**
          * SearchRequest
-         * @description 与前端 `/search`（Step1–2 与侧栏权重）对齐的检索请求字段。
+         * @description Retrieval request fields aligned with the frontend `/search` flow (Step 1–2 and sidebar weights).
          */
         SearchRequest: {
             /**
              * Query
-             * @description Step2 自然语言；discover_only 时可空
+             * @description Natural language query (Step 2); may be empty when discover_only is True.
              * @default
              */
             query: string;
             /**
              * State
-             * @description USPS 州码
+             * @description USPS state code.
              */
             state: string;
             /**
              * City
-             * @description 可选城市名（精确匹配）
+             * @description Optional city name (exact match).
              */
             city?: string | null;
             /**
@@ -311,12 +311,12 @@ export interface components {
             top_k: number;
             /**
              * Pool K
-             * @description 内部候选池 Top-N（前端默认 45）
+             * @description Internal candidate pool size Top-N (frontend default: 45).
              */
             pool_k?: number | null;
             /**
              * Keywords Extra
-             * @description 额外关键词
+             * @description Additional keywords to append to the query.
              */
             keywords_extra?: string | null;
             /**
@@ -332,7 +332,7 @@ export interface components {
             discover_only: boolean;
             /**
              * Cuisines
-             * @description 菜系多选：Sushi, Steakhouse, Korean, …
+             * @description Multi-select cuisine filter: Sushi, Steakhouse, Korean, …
              */
             cuisines?: string[];
             /**
