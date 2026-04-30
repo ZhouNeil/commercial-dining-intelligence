@@ -805,7 +805,7 @@ function resetFeedback() {
             v-model="userLocation"
             class="inp"
             type="text"
-            placeholder="e.g. 21 Flushing Ave, Brooklyn, NY"
+            placeholder="e.g. street address or neighborhood"
             :disabled="loading"
           />
 
@@ -828,7 +828,7 @@ function resetFeedback() {
               v-model="nlQuery"
               class="inp area"
               rows="3"
-              placeholder="e.g. affordable sushi near NYU, within 3 km"
+              placeholder="e.g. affordable sushi near me, within 3 km"
             />
             <span class="lbl">Cuisines</span>
             <p v-if="nlQueryLocksCuisines" class="hint hint-cuisine-lock">

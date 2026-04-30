@@ -6,10 +6,12 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import {
   getMerchantCities,
+  getMerchantCategoryResolve,
   getMerchantCoverage,
   postMerchantPredict,
   type MerchantCityRow,
   type MerchantCoverageResponse,
+  type MerchantCategoriesResponse,
   type MerchantPredictResponse,
 } from "../api/client";
 
@@ -31,6 +33,12 @@ const err = ref<string | null>(null);
 const result = ref<MerchantPredictResponse | null>(null);
 const coverage = ref<MerchantCoverageResponse | null>(null);
 
+// Category confirmation flow: user edits text -> must confirm -> then run prediction
+const confirmedCategoryText = ref<string | null>(null);
+const confirmedCategoryKeys = ref<string[]>([]);
+const categoryResolveLoading = ref(false);
+const categoryResolveErr = ref<string | null>(null);
+
 const cities = ref<MerchantCityRow[]>([]);
 const citySearch = ref("");
 
@@ -49,6 +57,17 @@ const resolvedCategoryLine = computed(() => {
   const keys = result.value?.resolved_category_keys;
   if (!keys?.length) return null;
   return keys.map((k) => formatCategoryLabel(k)).join(" · ");
+});
+
+const confirmedCategoryLine = computed(() => {
+  if (!confirmedCategoryKeys.value.length) return null;
+  return confirmedCategoryKeys.value.map((k) => formatCategoryLabel(k)).join(" · ");
+});
+
+const categoryDirty = computed(() => {
+  const t = businessTypeText.value.trim();
+  if (!t) return true;
+  return confirmedCategoryText.value == null || t !== confirmedCategoryText.value;
 });
 
 const filteredCities = computed(() => {
@@ -192,27 +211,49 @@ async function initMap() {
     lat.value = e.latlng.lat;
     lon.value = e.latlng.lng;
     updatePin();
-    debouncedPredictFromMap();
   });
   await loadCoverageLayers();
 }
 
-function debouncedPredictFromMap() {
-  if (!businessTypeText.value.trim()) {
-    err.value = "Enter a business type in the form (e.g. fast food, coffee), then click the map.";
+async function confirmCategory() {
+  const text = businessTypeText.value.trim();
+  categoryResolveErr.value = null;
+  if (!text) {
+    categoryResolveErr.value = "Enter a business type first (e.g. fast food, coffee).";
+    confirmedCategoryText.value = null;
+    confirmedCategoryKeys.value = [];
     return;
   }
-  if (debounceTimer) clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => {
-    void run();
-  }, 380);
+  categoryResolveLoading.value = true;
+  try {
+    const r: MerchantCategoriesResponse = await getMerchantCategoryResolve({
+      q: text,
+      city: city.value.trim() || null,
+      state: stateParam(),
+      max_rows_if_no_city: maxRows.value,
+    });
+    const keys = (r.category_keys || []).filter((k) => typeof k === "string" && k.startsWith("cat_"));
+    if (!keys.length) {
+      categoryResolveErr.value = "No category match for this text in the current city slice. Try simpler keywords.";
+      confirmedCategoryText.value = null;
+      confirmedCategoryKeys.value = [];
+      return;
+    }
+    confirmedCategoryText.value = text;
+    confirmedCategoryKeys.value = keys;
+  } catch (e) {
+    categoryResolveErr.value = e instanceof Error ? e.message : String(e);
+    confirmedCategoryText.value = null;
+    confirmedCategoryKeys.value = [];
+  } finally {
+    categoryResolveLoading.value = false;
+  }
 }
 
 async function run() {
   err.value = null;
-  const text = businessTypeText.value.trim();
-  if (!text) {
-    err.value = "Describe the business you plan to open (e.g. fast food, pizza, coffee).";
+  if (!confirmedCategoryKeys.value.length || categoryDirty.value) {
+    err.value = "Confirm the business type first, then run the prediction.";
     return;
   }
   loading.value = true;
@@ -222,8 +263,9 @@ async function run() {
       state: stateParam(),
       lat: lat.value,
       lon: lon.value,
-      category_query: text,
-      category_keys: [],
+      // Use resolved keys to guarantee the prediction matches the last confirmed category selection.
+      category_query: null,
+      category_keys: confirmedCategoryKeys.value,
       max_rows_if_no_city: maxRows.value,
     });
     resultDockOpen.value = true;
@@ -293,6 +335,17 @@ function scrollToLetter(letter: string) {
 
 watch([city, maxRows, stateFilter], () => {
   if (map) void refreshCoverage();
+  // City slice change invalidates category resolution.
+  confirmedCategoryText.value = null;
+  confirmedCategoryKeys.value = [];
+  categoryResolveErr.value = null;
+});
+
+watch(businessTypeText, () => {
+  // Edits after confirmation invalidate the confirmed keys.
+  if (confirmedCategoryText.value != null && businessTypeText.value.trim() !== confirmedCategoryText.value) {
+    confirmedCategoryKeys.value = [];
+  }
 });
 
 watch(
@@ -332,12 +385,29 @@ onBeforeUnmount(() => {
 
     <header class="head">
       <h1>Merchant site predictor</h1>
-      <p class="muted">
-        <strong>1)</strong> Enter a <strong>restaurant or venue type</strong> in plain language.
-        <strong>2)</strong> Choose an area in the city list (updates the map slice).
-        <strong>3)</strong> <strong>Click the map</strong> to place the pin — the model runs automatically.
-        Red outline: training hull; gray dots: sample points.
-      </p>
+      <div class="muted steps" role="list" aria-label="How to use this tool">
+        <div class="step" role="listitem">
+          <span class="step-n">1</span>
+          <span class="step-t"
+            >Type a <strong>restaurant / venue</strong> in plain language, then click <strong>Confirm type</strong> to lock
+            the matched categories.</span
+          >
+        </div>
+        <div class="step" role="listitem">
+          <span class="step-n">2</span>
+          <span class="step-t"
+            >Pick a <strong>city slice</strong> on the right (updates the map coverage), then <strong>click the map</strong> to
+            place the pin.</span
+          >
+        </div>
+        <div class="step" role="listitem">
+          <span class="step-n">3</span>
+          <span class="step-t"
+            >Click <strong>Run prediction</strong>. Red outline is the training hull; gray dots are sampled training
+            points.</span
+          >
+        </div>
+      </div>
     </header>
 
     <div class="layout">
@@ -384,19 +454,7 @@ onBeforeUnmount(() => {
                 <div class="stat-label">Predicted stars</div>
                 <div class="stat-value">{{ result.predicted_stars.toFixed(2) }} / 5</div>
               </div>
-              <div class="stat">
-                <div class="stat-label">Reference rows</div>
-                <div class="stat-value">{{ result.reference_row_count }}</div>
-              </div>
-              <div class="stat stat-small">
-                <div class="stat-label">Inside data hull</div>
-                <div class="stat-value">{{ result.inside_reference_hull ? "Yes" : "No" }}</div>
-              </div>
             </div>
-            <template v-if="Object.keys(result.live_feature_preview || {}).length">
-              <h2 class="subhead subhead--dock">Feature preview</h2>
-              <pre class="code code--dock">{{ JSON.stringify(result.live_feature_preview, null, 2) }}</pre>
-            </template>
           </aside>
         </div>
         <p class="map-hint">
@@ -457,7 +515,7 @@ onBeforeUnmount(() => {
           <p class="form-hint">
             The server matches this to Yelp-style training columns for the selected city (e.g. <strong>burger</strong>,
             <strong>fast food</strong>, <strong>coffee</strong>). Use commas for several types. Then
-            <strong>click the map</strong> — no Run button.
+            <strong>confirm</strong> the type, click the map, then run the prediction.
           </p>
           <input
             v-model="businessTypeText"
@@ -466,9 +524,36 @@ onBeforeUnmount(() => {
             autocomplete="off"
             placeholder="e.g. fast food, coffee"
             aria-label="Restaurant or venue type"
-            @keydown.enter.prevent="void run()"
+            @keydown.enter.prevent="void confirmCategory()"
           />
-          <p v-if="resolvedCategoryLine" class="resolved-line">Last run used: {{ resolvedCategoryLine }}</p>
+          <div class="form-actions">
+            <button
+              type="button"
+              class="btn-primary-mini"
+              :disabled="categoryResolveLoading || !businessTypeText.trim()"
+              @click="void confirmCategory()"
+            >
+              {{ categoryResolveLoading ? "Confirming…" : "Confirm type" }}
+            </button>
+            <button
+              type="button"
+              class="btn-secondary-mini"
+              :disabled="loading || categoryDirty || !confirmedCategoryKeys.length"
+              @click="void run()"
+            >
+              {{ loading ? "Running…" : "Run prediction" }}
+            </button>
+          </div>
+          <p v-if="categoryResolveErr" class="err" style="margin-top: 0.5rem">{{ categoryResolveErr }}</p>
+          <p v-else-if="confirmedCategoryLine" class="resolved-line">
+            Confirmed: {{ confirmedCategoryLine }}
+          </p>
+          <p v-else class="muted" style="margin-top: 0.5rem">
+            Tip: confirm the type to lock which categories are used.
+          </p>
+          <p v-if="resolvedCategoryLine" class="resolved-line" style="opacity: 0.75">
+            Last prediction used: {{ resolvedCategoryLine }}
+          </p>
         </div>
 
         <p v-if="err" class="err">{{ err }}</p>
@@ -514,6 +599,41 @@ onBeforeUnmount(() => {
   font-size: 0.9rem;
   line-height: 1.55;
   margin: 0;
+}
+
+.steps {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.35rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 16px;
+  border: 1px solid #e7e5e4;
+  background: #fafaf9;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 1.6rem 1fr;
+  gap: 0.6rem;
+  align-items: start;
+}
+
+.step-n {
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 0.8rem;
+  color: #991b1b;
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+}
+
+.step-t strong {
+  color: #44403c;
 }
 
 .muted code {
@@ -902,6 +1022,52 @@ onBeforeUnmount(() => {
   line-height: 1.35;
   color: #57534e;
   font-style: italic;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.2rem;
+}
+
+.btn-primary-mini,
+.btn-secondary-mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.45rem 0.8rem;
+  border-radius: 10px;
+  font-weight: 800;
+  font-size: 0.8rem;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.btn-primary-mini {
+  background: #b91c1c;
+  color: #fff;
+}
+
+.btn-primary-mini:hover:not(:disabled) {
+  background: #991b1b;
+}
+
+.btn-secondary-mini {
+  background: #fff;
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+
+.btn-secondary-mini:hover:not(:disabled) {
+  border-color: #fb7185;
+  background: #fff1f2;
+}
+
+.btn-primary-mini:disabled,
+.btn-secondary-mini:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .form-card label {
