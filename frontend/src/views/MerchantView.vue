@@ -383,14 +383,6 @@ onBeforeUnmount(() => {
                 <div class="stat-label">Predicted stars</div>
                 <div class="stat-value">{{ result.predicted_stars.toFixed(2) }} / 5</div>
               </div>
-              <div class="stat">
-                <div class="stat-label">Reference rows</div>
-                <div class="stat-value">{{ result.reference_row_count }}</div>
-              </div>
-              <div class="stat stat-small">
-                <div class="stat-label">Inside data hull</div>
-                <div class="stat-value">{{ result.inside_reference_hull ? "Yes" : "No" }}</div>
-              </div>
             </div>
           </aside>
         </div>

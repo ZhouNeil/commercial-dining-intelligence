@@ -150,6 +150,20 @@ const rlBadgeText = computed(() => {
   return m && typeof m.rl_strategy_label === "string" ? m.rl_strategy_label : "";
 });
 
+const locationMismatchWarning = computed((): string | null => {
+  const parsed = metaParsed.value as Record<string, unknown> | undefined;
+  if (!parsed || !data.value) return null;
+  const parsedState = typeof parsed.state_code === "string" ? parsed.state_code.trim().toUpperCase() : null;
+  const parsedLocation = typeof parsed.location === "string" ? parsed.location : null;
+  if (!parsedState) return null;
+  if (parsedState === browseState.value.trim().toUpperCase()) return null;
+  const locName = parsedLocation
+    ? parsedLocation.split(" ").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")
+    : parsedState;
+  const current = browseCity.value ? `${browseCity.value}, ${browseState.value}` : browseState.value;
+  return `No data available for "${locName}" — results shown are from ${current} instead. Use the State/City controls on the left to change location.`;
+});
+
 /** Non-empty NL query uses backend text parsing only; cuisine checkboxes are disabled to avoid mixed signals. */
 const nlQueryLocksCuisines = computed(() => nlQuery.value.trim().length > 0);
 
@@ -1003,6 +1017,7 @@ function resetFeedback() {
       </section>
 
       <p v-if="err" class="err-banner">{{ err }}</p>
+      <p v-if="locationMismatchWarning" class="location-warn-banner">{{ locationMismatchWarning }}</p>
 
       <div v-if="data && data.results.length" class="results-wrap">
         <div class="results-head">
@@ -1594,6 +1609,17 @@ function resetFeedback() {
   margin: 0.5rem 0 1rem;
   font-size: 0.88rem;
   font-weight: 500;
+}
+.location-warn-banner {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  padding: 0.65rem 0.9rem;
+  border-radius: 12px;
+  margin: 0.5rem 0 1rem;
+  font-size: 0.88rem;
+  font-weight: 500;
+  line-height: 1.45;
 }
 
 .results-head {
