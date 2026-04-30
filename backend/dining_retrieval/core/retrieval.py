@@ -307,14 +307,6 @@ class TouristRetrieval:
             )
             restaurant_matrix = vectorizer.fit_transform(docs).tocsr()
 
-            # Precompute L2 norms for cosine similarity
-            norms = np.sqrt(restaurant_matrix.power(2).sum(axis=1)).A1
-
-            # Normalized stars prior for reranking
-            stars = meta["stars"].astype(float).to_numpy()
-            stars_norm = (stars - 1.0) / 4.0
-            stars_norm = np.clip(stars_norm, 0.0, 1.0)
-
             paths = self._index_paths()
             dump(vectorizer, paths["vectorizer"])
             save_npz(paths["matrix"], restaurant_matrix)

@@ -53,13 +53,13 @@ class YelpDataProcessor:
                     open_hour = int(freq[0].split(':')[0])
                     close_hour = int(freq[1].split(':')[0])
                     
-                    if open_hour < 10: 
+                    if open_hour < 10:
                         is_open_morning = 1
-                    if close_hour >= 22: 
+                    if close_hour >= 22 or close_hour < open_hour:
                         is_open_latenight = 1
                     if day in ['Saturday', 'Sunday']: 
                         open_on_weekends = 1
-                except:
+                except Exception:
                     continue
             return pd.Series([is_open_morning, is_open_latenight, open_on_weekends])
 
@@ -94,9 +94,9 @@ class YelpDataProcessor:
             if isinstance(x, dict): 
                 return x
             if isinstance(x, str):
-                try: 
+                try:
                     return ast.literal_eval(x)
-                except: 
+                except Exception:
                     return {}
             return {}
 
@@ -104,9 +104,9 @@ class YelpDataProcessor:
             if isinstance(val, str):
                 val = val.strip()
                 if val.startswith('{') and val.endswith('}'):
-                    try: 
+                    try:
                         return ast.literal_eval(val)
-                    except: 
+                    except Exception:
                         return {}
                 val = val.replace("u'", "").replace("'", "")
                 if val.lower() == 'true': return 1

@@ -54,7 +54,7 @@ class AblationMerchantPredictor:
             "Base": self.cat_cols + self.time_cols + self.base_attr_cols,
             "LatLon": ["latitude", "longitude"],
             "Distances": ["log_dist_nearest_same_cat", "dist_nearest_same_cat"],
-            "Counts": [c for c in train_df.columns if "count" in c and "log_" in c or "has_" in c or "low_" in c],
+            "Counts": [c for c in train_df.columns if "count" in c or "has_" in c or "low_" in c],
             "Ratios": [c for c in train_df.columns if "ratio" in c],
             "Gap": [c for c in train_df.columns if "gap" in c],
             "Diversity": [c for c in train_df.columns if "diversity" in c],
@@ -181,10 +181,23 @@ class AblationMerchantPredictor:
         current_best_features_reg = families["Base"].copy()
         current_best_name_reg = "Base"
         current_best_mae = base_threshold_mae
-        
-        print("\n[NOTE] Bypassing Ablation limit to force True Spatial features into Rating Model for Map Interactivity!")
-        current_best_features_reg = families["Base"].copy() + families["Counts"] + families["Distances"] + families["Gap"] + families["Semantic"]
-        current_best_name_reg = "Base + Forced Geographic Spatials"
+
+        for fam_name in ["Distances", "Counts", "Ratios", "Gap", "Diversity", "Semantic"]:
+            test_feats = current_best_features_reg + families[fam_name]
+            test_name = f"{current_best_name_reg} + {fam_name}"
+
+            test_model = HistGradientBoostingRegressor(max_depth=3, random_state=42)
+            test_model.fit(X_train_full[test_feats], y_stars_train)
+            pred = test_model.predict(X_test_full[test_feats])
+            mae = mean_absolute_error(y_stars_test, pred)
+
+            if mae < current_best_mae:
+                print(f" [+] Keeping {fam_name}: MAE improved from {current_best_mae:.4f} -> {mae:.4f}")
+                current_best_features_reg = test_feats
+                current_best_name_reg = test_name
+                current_best_mae = mae
+            else:
+                print(f" [-] Rejecting {fam_name}: MAE increased to {mae:.4f}")
                 
         print("\n--- 6. REGRESSION FINAL COMPARISON TABLE ---")
         print(f"{'Model Algorithm':<25} | {'Feature Set Baseline':<30} | {'Train MAE':<9} | {'Test MAE':<9}")
