@@ -1,17 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import { getHealth, type HealthResponse } from "../api/client";
-
-const health = ref<HealthResponse | null>(null);
-const err = ref<string | null>(null);
-
-onMounted(async () => {
-  try {
-    health.value = await getHealth();
-  } catch (e) {
-    err.value = e instanceof Error ? e.message : String(e);
-  }
-});
+// Home page: keep it lightweight; do not probe backend health here.
 </script>
 
 <template>
@@ -42,13 +30,6 @@ onMounted(async () => {
         <p>Survival-style probability and predicted stars from spatial features and category mix.</p>
         <span class="fc-link">Open tool →</span>
       </router-link>
-    </section>
-
-    <section class="health-panel">
-      <h2>API health</h2>
-      <p v-if="err" class="err">{{ err }}</p>
-      <pre v-else-if="health" class="code">{{ JSON.stringify(health, null, 2) }}</pre>
-      <p v-else class="muted">Loading…</p>
     </section>
   </div>
 </template>
@@ -199,13 +180,6 @@ onMounted(async () => {
   font-size: 0.82rem;
   font-weight: 700;
   color: #dc2626;
-}
-
-.health-panel h2 {
-  font-size: 0.95rem;
-  font-weight: 800;
-  margin: 0 0 0.75rem;
-  color: #44403c;
 }
 
 .muted {
