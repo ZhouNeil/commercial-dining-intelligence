@@ -584,7 +584,7 @@ class TouristRetrieval:
             finite = np.isfinite(dist_c)
             dist_score[finite] = np.clip(1.0 - dist_c[finite] / (dmax + 1e-9), 0.0, 1.0)
 
-        # Multi-factor score (see docs/refactor-plan-data-vue-api.md §4 与 recommend_keywords 实现).
+        # Multi-factor score (see docs/refactor-plan-data-vue-api.md §4 and the recommend_keywords implementation).
         # stars_rank: stars weighted by review trust (low counts shrink toward neutral).
         final_score = (
             w_semantic * sim_n

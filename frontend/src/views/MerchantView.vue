@@ -345,8 +345,7 @@ onBeforeUnmount(() => {
         <div class="map-toolbar">
           <span v-if="coverageLoading" class="pill">Loading coverage…</span>
           <span v-else-if="coverage" class="pill muted-pill">
-            {{ coverage.reference_count }} ref. rows · {{ coverage.geo_count }} with coords
-            <template v-if="coverage.valid_hull"> · hull OK</template>
+            {{ coverage.geo_count }} locations loaded
           </span>
           <span v-if="result" class="pill muted-pill result-inline-pill">
             {{ (result.survival_probability * 100).toFixed(1) }}% · ★ {{ result.predicted_stars.toFixed(2) }}
@@ -393,10 +392,6 @@ onBeforeUnmount(() => {
                 <div class="stat-value">{{ result.inside_reference_hull ? "Yes" : "No" }}</div>
               </div>
             </div>
-            <template v-if="Object.keys(result.live_feature_preview || {}).length">
-              <h2 class="subhead subhead--dock">Feature preview</h2>
-              <pre class="code code--dock">{{ JSON.stringify(result.live_feature_preview, null, 2) }}</pre>
-            </template>
           </aside>
         </div>
         <p class="map-hint">

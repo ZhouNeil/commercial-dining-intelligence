@@ -23,7 +23,7 @@ class HealthResponse(BaseModel):
 
 
 class MerchantPredictRequest(BaseModel):
-    city: Optional[str] = Field(None, description="过滤参考商户；为空则取表头前 N 行")
+    city: Optional[str] = Field(None, description="Filter reference merchants by city; if empty, uses the first N rows.")
     state: Optional[str] = Field(
         None,
         description="Optional USPS state to disambiguate duplicate city names (must match train_spatial.state).",
@@ -54,11 +54,11 @@ class MerchantCitiesResponse(BaseModel):
 
 
 class MerchantCategoriesResponse(BaseModel):
-    """cat_* 列名：与当前 city/state/max_rows 切片下 predict 所用列一致。"""
+    """cat_* column names matching those used by predict for the current city/state/max_rows slice."""
 
     category_keys: list[str] = Field(
         default_factory=list,
-        description="train_spatial 中 cat_* 名；在该切片内至少出现一次（全零列已排除，除非全部为零）。",
+        description="cat_* column names from train_spatial that appear at least once in the slice (all-zero columns excluded).",
     )
 
 
@@ -102,33 +102,33 @@ class StatesResponse(BaseModel):
 
 class SearchActionEvent(BaseModel):
     action: str = Field(..., description="detail_open | like | pass | refresh | slider_override")
-    business_id: Optional[str] = Field(None, description="相关商户 ID（如适用）")
-    query_text: Optional[str] = Field(None, description="触发该动作时的 query_text")
+    business_id: Optional[str] = Field(None, description="Related business ID (if applicable).")
+    query_text: Optional[str] = Field(None, description="The query_text active when this action was triggered.")
 
 
 class SearchRequest(BaseModel):
-    """与前端 `/search`（Step1–2 与侧栏权重）对齐的检索请求字段。"""
+    """Retrieval request fields aligned with the frontend `/search` flow (Step 1–2 and sidebar weights)."""
 
-    query: str = Field("", description="Step2 自然语言；discover_only 时可空")
-    state: str = Field(..., description="USPS 州码")
-    city: Optional[str] = Field(None, description="可选城市名（精确匹配）")
+    query: str = Field("", description="Natural language query (Step 2); may be empty when discover_only is True.")
+    state: str = Field(..., description="USPS state code.")
+    city: Optional[str] = Field(None, description="Optional city name (exact match).")
     user_location: Optional[str] = Field(None, description="User's current location input for distance ranking")
     top_k: int = Field(10, ge=1, le=100)
     pool_k: Optional[int] = Field(
         None,
         ge=15,
         le=500,
-        description="内部候选池 Top-N（前端默认 45）",
+        description="Internal candidate pool size Top-N (frontend default: 45).",
     )
-    keywords_extra: Optional[str] = Field(None, description="额外关键词")
+    keywords_extra: Optional[str] = Field(None, description="Additional keywords to append to the query.")
     force_rebuild_index: bool = False
     discover_only: bool = Field(
         False,
-        description="True = 「Find general restaurants here」",
+        description="True = broad discovery (ignore NL query, return top restaurants for the area).",
     )
     cuisines: list[str] = Field(
         default_factory=list,
-        description="菜系多选：Sushi, Steakhouse, Korean, …",
+        description="Multi-select cuisine filter: Sushi, Steakhouse, Korean, …",
     )
     w_semantic: float = Field(0.85, ge=0.0, le=2.0)
     w_rating: float = Field(1.05, ge=0.0, le=2.0)
@@ -137,13 +137,13 @@ class SearchRequest(BaseModel):
     w_popularity: float = Field(0.1, ge=0.0, le=2.0)
     liked_business_ids: list[str] = Field(default_factory=list)
     disliked_business_ids: list[str] = Field(default_factory=list)
-    rl_enabled: bool = Field(True, description="是否启用 RL 初始策略选择")
-    rl_user_overrode: bool = Field(False, description="用户是否手动接管了权重滑条")
-    rl_prev_selected_arm: Optional[str] = Field(None, description="上一次 RL 选中的 arm")
-    rl_prev_intent_name: Optional[str] = Field(None, description="上一次 RL 识别的 intent")
+    rl_enabled: bool = Field(True, description="Whether to enable RL-based initial strategy selection.")
+    rl_user_overrode: bool = Field(False, description="Whether the user manually overrode the RL ranking weights.")
+    rl_prev_selected_arm: Optional[str] = Field(None, description="The RL arm selected in the previous request.")
+    rl_prev_intent_name: Optional[str] = Field(None, description="The intent bucket identified in the previous request.")
     rl_action_events: list[SearchActionEvent] = Field(
         default_factory=list,
-        description="自上次搜索以来的前端动作事件，用于 RL 反馈",
+        description="Frontend action events since the last search, used as RL feedback.",
     )
 
 

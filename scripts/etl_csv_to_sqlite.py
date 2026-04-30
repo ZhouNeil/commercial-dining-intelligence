@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-P3：将 `data/cleaned/business_dining.csv` 导入 SQLite（商户主档最小表）。
-不导入空间宽表（仍用 CSV/Parquet）。
+Imports `data/cleaned/business_dining.csv` into a minimal SQLite table (merchant master records).
+Does not import the spatial wide table (still uses CSV/Parquet for that).
 
-用法（仓库根目录）：
+Usage (from repo root):
   python scripts/etl_csv_to_sqlite.py
   python scripts/etl_csv_to_sqlite.py --out data/merchants.sqlite3
 """
@@ -22,13 +22,13 @@ def main() -> None:
         "--out",
         type=Path,
         default=None,
-        help="SQLite 输出路径（默认 data/merchants.sqlite3）",
+        help="SQLite output path (default: data/merchants.sqlite3).",
     )
     args = ap.parse_args()
     repo = Path(__file__).resolve().parents[1]
     src = repo / "data" / "cleaned" / "business_dining.csv"
     if not src.is_file():
-        raise SystemExit(f"缺少源文件: {src}")
+        raise SystemExit(f"Source file not found: {src}")
 
     out = (args.out or (repo / "data" / "merchants.sqlite3")).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)

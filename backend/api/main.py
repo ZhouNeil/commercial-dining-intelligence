@@ -1,8 +1,8 @@
 """
-FastAPI 入口：健康检查、商家预测、检索。
+FastAPI entry point: health check, merchant prediction, and restaurant retrieval.
 
-启动（仓库根目录）：`./scripts/run_api.sh`（已设置 `PYTHONPATH=backend:.`）
-或: `PYTHONPATH=backend:. .venv/bin/uvicorn api.main:app --reload --host 0.0.0.0 --port 8000`
+Start from repo root: `./scripts/run_api.sh` (sets `PYTHONPATH=backend:.`)
+Or: `PYTHONPATH=backend:. .venv/bin/uvicorn api.main:app --reload --host 0.0.0.0 --port 8000`
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def get_repo_root() -> Path:
     env = os.environ.get("API_REPO_ROOT")
     if env:
         return Path(env).resolve()
-    # backend/api/main.py → 仓库根
+    # backend/api/main.py → repo root
     return Path(__file__).resolve().parents[2]
 
 

@@ -18,7 +18,7 @@ class UserPreferenceState:
 
 
 def preference_from_session(raw: dict[str, Any]) -> UserPreferenceState:
-    """Build state from JSON-serializable dict（如前端 session 或 API 负载）。"""
+    """Build state from a JSON-serializable dict (e.g. frontend session or API payload)."""
     return UserPreferenceState(
         liked_business_ids=[str(x) for x in raw.get("liked_business_ids") or [] if str(x).strip()],
         disliked_business_ids=[
