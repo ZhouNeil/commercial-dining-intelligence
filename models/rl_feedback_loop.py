@@ -42,9 +42,9 @@ def classify_query_intent(query: str) -> str:
         r"\banniversary\b",
     )
 
-    if any(re.search(pattern, text) for pattern in quick_patterns):
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in quick_patterns):
         return "intent_quick"
-    if any(re.search(pattern, text) for pattern in romantic_patterns):
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in romantic_patterns):
         return "intent_romantic"
     return "intent_default"
 

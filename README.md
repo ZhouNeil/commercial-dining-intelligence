@@ -71,6 +71,8 @@ Due to the massive size of the Yelp Open Dataset, raw and cleaned data files are
 
 ## 🚀 Setup Environment
 
+**Prerequisites:** You must have Python 3 installed for the backend, and Node.js installed for the frontend.
+
 We use `uv` for lightning-fast dependency management. To run this project locally, please follow these steps from the root directory of the project:
 
 **1. Initial Setup (Run Once):**

@@ -145,6 +145,14 @@ const metaPool = computed(() => {
   return `Pool ${pr} rows (top ${pk} internally)${rr ? " · v2 re-ranked" : ""}`;
 });
 
+const semanticMatchCount = computed((): number | null => {
+  const m = data.value?.meta as Record<string, unknown> | undefined;
+  if (!m || m.discover_only || typeof m.semantic_match_count !== "number") return null;
+  // If the query was essentially empty (just "restaurants"), don't show the message
+  if (m.query_text === "restaurants" || !m.query_text) return null;
+  return m.semantic_match_count;
+});
+
 const rlBadgeText = computed(() => {
   const m = data.value?.meta as Record<string, unknown> | undefined;
   return m && typeof m.rl_strategy_label === "string" ? m.rl_strategy_label : "";
@@ -155,8 +163,24 @@ const locationMismatchWarning = computed((): string | null => {
   if (!parsed || !data.value) return null;
   const parsedState = typeof parsed.state_code === "string" ? parsed.state_code.trim().toUpperCase() : null;
   const parsedLocation = typeof parsed.location === "string" ? parsed.location : null;
-  if (!parsedState) return null;
-  if (parsedState === browseState.value.trim().toUpperCase()) return null;
+  
+  if (!parsedState && !parsedLocation) return null;
+
+  let mismatch = false;
+  if (parsedState && parsedState !== browseState.value.trim().toUpperCase()) {
+    mismatch = true;
+  }
+  
+  if (parsedLocation && !mismatch) {
+    const cityLower = browseCity.value.trim().toLowerCase();
+    const locLower = parsedLocation.trim().toLowerCase();
+    if (cityLower && !cityLower.includes(locLower) && !locLower.includes(cityLower)) {
+      mismatch = true;
+    }
+  }
+
+  if (!mismatch) return null;
+
   const locName = parsedLocation
     ? parsedLocation.split(" ").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")
     : parsedState;
@@ -1017,7 +1041,16 @@ function resetFeedback() {
       </section>
 
       <p v-if="err" class="err-banner">{{ err }}</p>
-      <p v-if="locationMismatchWarning" class="location-warn-banner">{{ locationMismatchWarning }}</p>
+      <p v-if="!err && locationMismatchWarning" class="location-warn-banner">{{ locationMismatchWarning }}</p>
+
+      <div v-if="!err && semanticMatchCount !== null && data && data.results.length && semanticMatchCount < data.results.length" class="location-warn-banner" style="margin-top: 1rem;">
+        <template v-if="semanticMatchCount === 0">
+          We couldn't find any exact matches for your specific search. Showing top-rated spots in this city based on your other preferences.
+        </template>
+        <template v-else-if="semanticMatchCount < data.results.length">
+          Our data is insufficient to help you find {{ data.results.length }} matching restaurants. We found exactly <strong>{{ semanticMatchCount }}</strong> match{{ semanticMatchCount === 1 ? '' : 'es' }} for your specific search. The remaining <strong>{{ data.results.length - semanticMatchCount }}</strong> recommendations are top-rated spots based on your other preferences.
+        </template>
+      </div>
 
       <div v-if="data && data.results.length" class="results-wrap">
         <div class="results-head">

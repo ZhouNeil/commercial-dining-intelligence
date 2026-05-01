@@ -31,6 +31,7 @@ export type SearchRequest = GeneratedSearchRequest & {
 };
 
 export type SearchMeta = Record<string, unknown> & {
+  semantic_match_count?: number;
   rl_applied?: boolean;
   rl_intent_name?: string | null;
   rl_selected_arm?: string | null;
