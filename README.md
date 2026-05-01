@@ -95,7 +95,7 @@ When setting up the project on a new machine or deployment target:
 
 1. Clone the repository from GitHub.
 2. Download `data/` from Google Drive and place it at the repo root.
-3. Download `artifacts/` from Google Drive and place it under `models/artifacts/`.
+3. Download `artifacts/` from Google Drive and place it under `models/`.
 
 The final local structure should look like this:
 
