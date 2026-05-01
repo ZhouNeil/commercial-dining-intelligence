@@ -216,7 +216,7 @@ data/*.json
 data/*.parquet
 data/processed_csv/*
 
-# 本地生成的数据 manifest（`python scripts/write_data_manifest.py`）
+# Locally generated data manifest (run: python scripts/write_data_manifest.py)
 data/manifests/active.json
 
 # Stratified slice (not in repo; regenerate: python scripts/build_representative_slice.py)
