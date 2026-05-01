@@ -401,6 +401,7 @@ class RetrievalSearchService:
             "discover_only": discover_only,
             "pool_rows": int(len(pool_df)),
             "pool_k": pool_eff,
+            "semantic_match_count": int((result_df["similarity"] > 0.0).sum()) if "similarity" in result_df.columns else 0,
             "reranked": interactive_on,
             "semantic_state_note": semantic_state_note,
             "rl_applied": rl_applied,
