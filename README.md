@@ -88,6 +88,9 @@ Push the code to GitHub, but upload these two folders to Google Drive:
 1. `data/`
 2. `models/artifacts/`
 
+Google Drive folder:
+[`https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing`](https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing)
+
 When setting up the project on a new machine or deployment target:
 
 1. Clone the repository from GitHub.
