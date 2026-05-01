@@ -318,6 +318,7 @@ class RetrievalSearchService:
             cuisine_from_nl: list[str] = []
             if parsed.cuisine and parsed.cuisine in nl_map:
                 cuisine_from_nl.append(nl_map[parsed.cuisine])
+            # Merge UI-selected and NL-parsed cuisines, preserving order and removing duplicates.
             merged = list(dict.fromkeys(list(cuisines or []) + cuisine_from_nl))
             effective_cuisines = merged or None
 
@@ -359,7 +360,8 @@ class RetrievalSearchService:
         else:
             effective_weights = user_weights
 
-        # Once the user touches a slider, the manual request weights win for that round.
+        # The RL arm is still recorded for logging even when overridden, so we can
+        # learn from what the user chose relative to what RL would have selected.
         if rl_user_overrode:
             effective_weights = user_weights
 

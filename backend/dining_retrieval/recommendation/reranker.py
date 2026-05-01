@@ -79,6 +79,8 @@ def _preference_row_score(
         except (TypeError, ValueError):
             parts.append(0.5)
 
+    # Soft linear penalty past the cap so nearby-but-over-limit restaurants
+    # score better than very distant ones (rather than all getting 0.0).
     for dc in pref.disliked_cuisines:
         k = str(dc).strip().lower()
         if k and k in categories_norm:
@@ -157,6 +159,8 @@ def rerank_pool(
     cats = out.get("categories", pd.Series([""] * n)).astype(str).str.lower()
     pref_scores = np.array([_preference_row_score(out.iloc[i], pref, cats.iloc[i]) for i in range(n)])
 
+    # v2 score: base retrieval score + liked-venue similarity - disliked-venue similarity + preference match.
+    # sim_disliked is subtracted so candidates resembling disliked venues are penalized.
     v2 = (
         w_base * base_n
         + w_like * sim_liked

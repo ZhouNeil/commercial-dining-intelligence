@@ -195,6 +195,7 @@ def _build_semantic_query(raw: str, parsed: ParsedQuery) -> tuple[list[str], str
     q = re.sub(r"\bin\s+[a-z][a-z\s\-]{1,60}", " ", q)
 
     tokens = re.findall(r"[a-zA-Z']+", q)
+    # De-duplicate tokens while preserving their original order.
     filtered: list[str] = []
     seen: set[str] = set()
     for tok in tokens:

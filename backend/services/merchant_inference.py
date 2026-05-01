@@ -203,7 +203,9 @@ def resolve_merchant_category_text(
     if not ranked or ranked[0][1] < 8.0:
         return []
     best_s, s2 = ranked[0][1], ranked[1][1] if len(ranked) > 1 else 0.0
-    # For a single-type query like "steakhouse", aggressively prefer the best match.
+    # Single-segment queries (e.g. "steakhouse") use a lower confidence threshold to
+    # return a single match. Multi-segment queries need a higher score and larger gap
+    # before collapsing to one result, because ambiguity is more likely.
     if single_segment and best_s >= 80.0 and (best_s - s2) >= 6.0:
         return [ranked[0][0]]
     if best_s >= 88.0 and (best_s - s2) >= 12.0:
@@ -346,6 +348,10 @@ def point_in_hull_ring(lon: float, lat: float, ring: Optional[np.ndarray]) -> bo
     for i in range(n):
         xi, yi = float(verts[i, 0]), float(verts[i, 1])
         xj, yj = float(verts[j, 0]), float(verts[j, 1])
+        # Even-odd rule: count how many polygon edges a horizontal ray from (x,y)
+        # crosses. (yi > y) != (yj > y) filters to edges that straddle the point's
+        # y-coordinate; xinters is the x-intercept of that edge at y.
+        # denom guard prevents divide-by-zero on horizontal edges.
         if (yi > y) != (yj > y):
             denom = (yj - yi) or 1e-18
             xinters = (xj - xi) * (y - yi) / denom + xi
@@ -546,9 +552,9 @@ def predict_merchant_site(
     survival_model = _survival_model(rs)
     rating_model = _rating_model(rs)
 
-    # Some survival artifacts were trained with a small "local_*" feature set.
-    # When the engineer emits the newer radius-based columns, add aliases so we
-    # don't silently feed all-zeros into the classifier (which makes outputs constant).
+    # Models trained before the radius-based feature rename expect "local_*" column names.
+    # Map old names to current engineered names so we don't feed all-zeros into the
+    # classifier when the artifact and live engineer are out of sync.
     def _augment_live_for_model_columns(model_cols: set[str], df: pd.DataFrame) -> pd.DataFrame:
         out = df.copy()
         # Legacy feature names (older training code) -> current engineered columns
