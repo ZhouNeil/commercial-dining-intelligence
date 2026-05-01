@@ -110,7 +110,7 @@ Do not upload large datasets or trained model files to GitHub.
 
 ## 🚀 Setup Environment
 
-**Prerequisites:** You must have Python 3 installed for the backend, and Node.js installed for the frontend.
+**Prerequisites:** You must have Python 3.11 installed for the backend, and Node.js installed for the frontend.
 
 We use `uv` for lightning-fast dependency management. To run this project locally, please follow these steps from the root directory of the project:
 
@@ -136,7 +136,7 @@ pip install -r requirements.txt
 
 ## Running the App (Vue + API)
 
-Prepare `data/cleaned/business_dining.csv` and `review_dining.csv`. The TF-IDF index will be built automatically in `models/artifacts/` on the first search request (this may take a moment).
+Prepare `data/cleaned/business_dining.csv` and `data/cleaned/review_dining.csv`. The TF-IDF index will be built automatically in `models/artifacts/` on the first search request (this may take a moment).
 
 ### HTTP API
 
