@@ -359,8 +359,11 @@ class TouristRetrieval:
             meta["categories_norm"] = meta.get("categories", "").fillna("").astype(str).str.lower()
 
         stars = meta["stars"].astype(float).to_numpy()
+        # Map 1–5 star scale to [0, 1] for use in multi-factor score blending.
         stars_norm = (stars - 1.0) / 4.0
         stars_norm = np.clip(stars_norm, 0.0, 1.0)
+        # Precompute per-row L2 norms from the sparse TF-IDF matrix using element-wise
+        # power (avoids materializing the full dense matrix via .toarray()).
         norms = np.sqrt(restaurant_matrix.power(2).sum(axis=1)).A1
 
         return RestaurantSearchIndex(
@@ -589,6 +592,8 @@ class TouristRetrieval:
         rank_k = max(top_k, int(pool_k)) if pool_k is not None else top_k
         rank_k = max(1, min(rank_k, len(idx)))
 
+        # Two-phase partial sort: argpartition selects the top rank_k indices in O(n),
+        # then argsort orders only those k elements — much cheaper than a full sort.
         if len(idx) <= rank_k:
             top_local = np.argsort(final_score)[::-1]
         else:

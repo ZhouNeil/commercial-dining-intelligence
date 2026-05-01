@@ -28,7 +28,7 @@
           "relative_path": { "type": "string" },
           "bytes": { "type": "integer", "minimum": 0 },
           "mtime_epoch": { "type": "number" },
-          "sha256": { "type": "string", "description": "可选；大文件可省略" }
+          "sha256": { "type": "string", "description": "Optional; may be omitted for large files" }
         }
       }
     }

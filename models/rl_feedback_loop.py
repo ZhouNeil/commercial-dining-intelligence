@@ -54,7 +54,7 @@ class RLFeedbackLoop:
         self,
         log_path: str = "data/processed_csv/feedback_log.csv",
         q_path: str = "data/processed_csv/q_values.json",
-        verbose: bool = True,
+        verbose: bool = False,
     ):
         """
         Initialize logger, persisted state, and static arm definitions.
@@ -200,6 +200,8 @@ class RLFeedbackLoop:
         """Choose an arm for the provided intent bucket using UCB."""
         intent_state = self._intent_state(intent_name)
         arms_state = intent_state["arms"]
+        # Force-explore any arm with zero pulls before applying UCB scores,
+        # which would otherwise compute log(N)/0.
         for arm_name in self.arms:
             if int(arms_state[arm_name]["pull_count"]) == 0:
                 self._emit(
@@ -243,6 +245,8 @@ class RLFeedbackLoop:
         arm_state = intent_state["arms"][arm_name]
         old_q = float(arm_state["q_value"])
         reward_f = float(reward)
+        # TD(0) / exponential moving average: new_q = (1-alpha)*old_q + alpha*reward.
+        # alpha=0.15 weights recent rewards at 15% and decays history at 85% per step.
         new_q = old_q + self.alpha * (reward_f - old_q)
 
         arm_state["q_value"] = new_q

@@ -1,207 +1,207 @@
-# 全栈重构规划：数据层、存储、Vue 前端与模型 API
+# Full-Stack Refactor Plan: Data Layer, Storage, Vue Frontend, and Model API
 
-本文档面向「CSV 双轨数据 → 可演进的数据与接口层 → Vue 前端」的整体重构，供团队评审与拆任务使用。范围包括：**数据建模与是否引入 SQLite/DB**、**后端 API 对接现有模型**、**前端用 Vue 重写**，以及**分阶段任务拆分**。
+This document covers the overall refactor from a dual-track CSV data setup to a maintainable data and API layer with a Vue frontend. Scope includes: **data modeling and whether to introduce SQLite/DB**, **backend API wiring for existing models**, **Vue frontend rewrite**, and **phased task breakdown**.
 
-> **`docs/` 已精简**：除本文件外，历史说明、契约长文、对照表等均已移除。**运行命令、目录树**以仓库根目录 [`README.md`](../README.md) 为准；**字段级契约**以 `frontend/openapi.json`（及 `backend/api/schemas.py`）为准。后续可另增一份简短的「项目概述」Markdown。
+> **`docs/` has been trimmed**: aside from this file, historical specs, long contract docs, and comparison tables have been removed. **Run commands and directory layout** are documented in the repo root [`README.md`](../README.md); **field-level contracts** are in `frontend/openapi.json` (and `backend/api/schemas.py`). A short project overview page can be added separately if needed.
 
-### 实施进度（仓库内已落地）
+### Implementation Status (landed in repo)
 
-| 阶段 | 状态 | 说明 |
-|------|------|------|
-| P0 | 已做 | `data/manifests/schema.sample.json`、`scripts/write_data_manifest.py`（数据契约细节待新「项目概述」或本文件迭代补全） |
-| P1 | 已做 | `backend/services/merchant_inference.py`、`backend/services/retrieval_service.py`；`tests/test_inference.py` 走服务层 |
-| P2 | 已做 | `backend/api/`（FastAPI）、`scripts/run_api.sh`、`Dockerfile.api`、`requirements-dev.txt` + pytest |
-| P3 | 已做 | `scripts/etl_csv_to_sqlite.py`（导入 `business_dining.csv` → SQLite） |
-| P4 | 已做（持续补全 UI） | `frontend/`：Vue Router、`/search` 与 `/merchant`、OpenAPI + `gen:api`、根 `package.json` 转发、`deploy/nginx-frontend.example.conf`；地图/详情等待办 |
-| P5 | 未做 | Parquet、模型 registry、限流等 |
-
----
-
-## 1. 现状速览（为何要重构）
-
-### 1.1 两条相对独立的数据/产品轨
-
-| 轨 | 典型用途 | 数据形态（当前） | 主要消费者 |
-|----|-----------|------------------|------------|
-| **A. 检索 / 推荐** | 自然语言 + 筛选、TF-IDF 检索、地图展示 | `data/cleaned/`（如 `business_dining.csv`）、`data/slice_representative/` 备选；索引与向量在 `models/artifacts/` | `backend/` 下 `dining_retrieval`、`services`、`api`；`frontend`（Vue） |
-| **B. 空间 / 商家预测** | 选址、空间特征、生存概率与星级回归 | `data/train_spatial.csv`（及划分出的 `train_merchant_split` / `test_spatial`）；模型 `*.pkl` 在 `models/artifacts/` | `merchant_predictor`、`SpatialFeatureEngineer`、`tests/test_inference`、`frontend` `/merchant` |
-
-两条轨**共享「餐厅」语义**，但**列结构、粒度、更新方式不同**：A 偏「展示与检索」，B 偏「宽表 + 已算好的空间特征」。CSV 在本地协作时易出现：**路径散落、重复拷贝、难以版本化「哪一份是线上真相」、大文件 Git 不友好**。
-
-### 1.2 当前痛点（与重构目标对应）
-
-- **双套 CSV**：同一业务概念（商户）在 A/B 中字段不一致，缺少统一实体 ID 与血缘说明。
-- **职责边界不清**：「清洗结果」「特征表」「训练集」混在同一目录层级，新人难判断从哪读。
-- **（已解决）** 曾将前端与模型耦合在旧版 Streamlit MVP；现已拆为 Vue + OpenAPI + `backend/services`。
-- **推理与训练路径硬编码**：多处 `Path` / 相对路径，不利于部署到固定目录或容器。
-
-重构目标：**单一事实来源（或明确分层的多源）+ 可版本化的数据管线 + 与前端解耦的 HTTP API + Vue SPA**。
+| Phase | Status | Notes |
+|-------|--------|-------|
+| P0 | Done | `data/manifests/schema.sample.json`, `scripts/write_data_manifest.py` (field-level data contract details to be added in a future project overview or next iteration of this doc) |
+| P1 | Done | `backend/services/merchant_inference.py`, `backend/services/retrieval_service.py`; `tests/test_inference.py` exercises the service layer |
+| P2 | Done | `backend/api/` (FastAPI), `scripts/run_api.sh`, `Dockerfile.api`, `requirements-dev.txt` + pytest |
+| P3 | Done | `scripts/etl_csv_to_sqlite.py` (imports `business_dining.csv` → SQLite) |
+| P4 | Done (UI still in progress) | `frontend/`: Vue Router, `/search` and `/merchant` views, OpenAPI + `gen:api`, root `package.json` forwarding, `deploy/nginx-frontend.example.conf`; map detail views still pending |
+| P5 | Not started | Parquet, model registry, rate limiting, etc. |
 
 ---
 
-## 2. 数据层重构思路
+## 1. Current State (Why Refactor)
 
-### 2.1 原则
+### 1.1 Two Largely Independent Data/Product Tracks
 
-1. **先定「领域模型」再定存储**：商户、评论、空间特征快照、检索索引元数据、模型制品（artifact）各是什么生命周期。
-2. **区分「在线服务读的数据」与「离线批处理产物」**：在线尽量小、可索引；离线宽表可仍在列式/文件或仓库外对象存储。
-3. **统一主键**：全项目对 Yelp `business_id`（或自研 `merchant_uuid`）保持一致，A/B 轨通过该键关联，而不是靠 name+lat 模糊对齐。
+| Track | Typical use | Data format (current) | Main consumers |
+|-------|------------|----------------------|----------------|
+| **A. Retrieval / Recommendation** | NL search + filters, TF-IDF retrieval, map display | `data/cleaned/` (e.g. `business_dining.csv`), `data/slice_representative/` as fallback; index and vectors in `models/artifacts/` | `backend/dining_retrieval`, `services`, `api`; Vue frontend |
+| **B. Spatial / Merchant Prediction** | Site selection, spatial features, survival probability and star rating regression | `data/train_spatial.csv` (and splits `train_merchant_split` / `test_spatial`); `.pkl` models in `models/artifacts/` | `merchant_predictor`, `SpatialFeatureEngineer`, `tests/test_inference`, frontend `/merchant` |
 
-### 2.2 建议的目录与逻辑分层（即使短期仍落盘 CSV）
+Both tracks share the concept of a "restaurant", but differ in **column structure, granularity, and update cadence**: Track A is oriented toward display and retrieval, Track B toward wide feature tables. With CSV files, local collaboration leads to: **scattered paths, duplicate copies, no clear "source of truth", and large files that don't version well in Git**.
 
-在引入 DB 之前也可先做「逻辑重构」，减少双轨混乱：
+### 1.2 Current Pain Points (and Refactor Goals)
+
+- **Dual CSV sets**: the same business entity appears with inconsistent fields across A and B, with no shared entity ID or lineage documentation.
+- **Unclear responsibility boundaries**: "cleaned output", "feature table", and "training set" sit at the same directory level, making it hard for new contributors to know where to read from.
+- **(Resolved)** The old Streamlit MVP coupled frontend and model code; this has been replaced by Vue + OpenAPI + `backend/services`.
+- **Hard-coded inference and training paths**: multiple `Path` / relative path references make deployment to a fixed directory or container harder.
+
+Refactor goals: **single source of truth (or clearly layered multi-source) + versionable data pipeline + HTTP API decoupled from frontend + Vue SPA**.
+
+---
+
+## 2. Data Layer Refactor Approach
+
+### 2.1 Principles
+
+1. **Define the domain model before choosing storage**: what is the lifecycle of merchants, reviews, spatial feature snapshots, retrieval index metadata, and model artifacts?
+2. **Separate "data read by the online service" from "offline batch outputs"**: online data should be small and indexable; offline wide tables can remain in columnar/file format or external object storage.
+3. **Unified primary key**: use Yelp `business_id` (or an internal `merchant_uuid`) consistently throughout the project so that tracks A and B join on that key rather than fuzzy name+lat matching.
+
+### 2.2 Suggested Directory and Logical Layers (even if CSV files are kept short-term)
+
+A "logical refactor" before introducing a DB can reduce dual-track confusion:
 
 ```
 data/
-  raw/              # 原始 Yelp 等（可不入库，或仅存元数据）
-  curated/          # 清洗后「业务可读」窄表：商户主档、评论摘要等（对应现 cleaned / slice）
-  features/         # 机器学习用宽表：train_spatial、中间 parquet 等
-  manifests/        # 数据版本清单：文件名、sha256、生成脚本 commit、行数
+  raw/              # original Yelp data etc. (not necessarily imported to DB)
+  curated/          # cleaned "business-readable" narrow tables: merchant master, review summaries, etc. (corresponds to current cleaned / slice)
+  features/         # ML wide tables: train_spatial, intermediate parquet files, etc.
+  manifests/        # data version manifests: filenames, sha256, generating script commit, row counts
 models/
-  artifacts/        # 索引、vectorizer、pkl（继续 gitignore，用 manifest 描述版本）
+  artifacts/        # index, vectorizer, pkl files (keep gitignored, described via manifest)
 ```
 
-**manifest（JSON/YAML）**：每次跑 pipeline 写一条记录，API 与训练脚本只依赖「当前激活版本指针」，而不是写死文件名。
+**Manifest (JSON/YAML)**: each pipeline run writes one record. The API and training scripts depend on "current active version pointer" rather than hard-coded filenames.
 
-### 2.3 「两套数据」如何收敛（策略选项）
+### 2.3 How to Converge the Two Data Sets (Strategy Options)
 
-- **选项 1（推荐，渐进）**：**商户主档一份**（curated），空间特征由 pipeline **从主档 + 规则 JOIN** 生成 `features/train_spatial`，B 轨只读 features；A 轨读 curated + artifacts。两边通过 `business_id` 对齐。
-- **选项 2**：保留双表但**强制文档 + 契约**：在 README / OpenAPI / 独立概述文档中维护字段表与血缘，API 层只暴露 DTO，不暴露原始 CSV 路径给前端。
-- **选项 3（长期）**：主档进 DB，特征表仍以 Parquet/SQLite 列存形式供 pandas/sklearn 批量读（见下节）。
-
----
-
-## 3. 是否使用数据库？SQLite 是否够用？
-
-### 3.1 各类数据的合适载体
-
-| 数据类型 | CSV 继续用的代价 | SQLite | PostgreSQL 等 | 文件（Parquet/npz） |
-|----------|------------------|--------|-----------------|---------------------|
-| 商户主档、评论元数据、用户偏好（小） | 大表全量扫描、并发差 | **很适合** MVP：单文件、零运维、SQL 索引 | 多写者、高并发、地理扩展 | 可选：主档导出 parquet 做分析 |
-| 宽表特征（千列） | 慢、内存爆炸 | 可存但**不如 Parquet** 对列存友好 | 同左 | **推荐**：特征训练/推理用 Parquet |
-| TF-IDF 稀疏矩阵、大向量 | 不适合频繁 IO | 不适合存大 blob | 存 blob 或仍用文件系统 | **保持 npz/joblib** + manifest |
-| 线上 OLTP（订单、会话） | 不适用 | 单机够用 | 团队规模上来再迁 | — |
-
-### 3.2 结论建议
-
-- **第一阶段**：引入 **SQLite**（或继续 CSV + 强 manifest）作为 **「商户/评论/配置」的单一查询源**；**空间宽表与矩阵仍用文件**（Parquet + 现有 joblib/npz），避免把千维特征硬塞进 SQL。
-- **何时上 PostgreSQL**：需要多实例写、复杂权限、PostGIS 地理查询在库内完成、或托管云服务时。
-- **不要指望 SQLite 解决所有问题**：它是 **结构化元数据与关系** 的利器，不是列存数仓；与 **现有 sklearn 管道** 最顺的仍是 **pandas + Parquet** 读宽表。
-
-### 3.3 若采用 SQLite 的示意 schema（精简）
-
-- `merchants`：`business_id` PK，`name`, `lat`, `lon`, `city`, `state`, `stars`, `review_count`, `is_open`, `categories_json`, …
-- `reviews`：`review_id` PK，`business_id` FK，`text`, `stars`, `date`, …（可按需只存抽样）
-- `dataset_builds`：`id`，`kind`（spatial_train / retrieval_index），`path`，`checksum`，`created_at`，`git_sha`
-- `model_registry`：`name`（survival / rating），`path`，`feature_schema_hash`，`created_at`
-
-空间特征表若列数极大，可 **仅存 `business_id` + 少量指标 + parquet 路径** 或整表仍放文件，由 API 服务内存映射/按需加载。
+- **Option 1 (recommended, incremental)**: **one merchant master** (curated), spatial features generated by the pipeline via **JOIN from master + rules** into `features/train_spatial`. Track B reads only from features; Track A reads from curated + artifacts. Both sides align via `business_id`.
+- **Option 2**: keep dual tables but **enforce documentation + contracts**: maintain a field table and lineage in README / OpenAPI / a separate overview doc. The API layer only exposes DTOs, not raw CSV paths, to the frontend.
+- **Option 3 (long-term)**: master data moves to a DB; feature tables remain as Parquet/SQLite columnar files for pandas/sklearn batch reads (see below).
 
 ---
 
-## 4. 目标架构：Vue 前端 + API + 现有模型
+## 3. Should We Use a Database? Is SQLite Sufficient?
 
-### 4.1 逻辑分层
+### 3.1 Appropriate Storage for Each Data Type
+
+| Data type | Cost of continuing with CSV | SQLite | PostgreSQL etc. | Files (Parquet/npz) |
+|-----------|---------------------------|--------|-----------------|---------------------|
+| Merchant master, review metadata, user preferences (small) | Full table scans, poor concurrency | **Good fit** for MVP: single file, zero ops, SQL indexes | Multiple writers, high concurrency, geospatial extensions | Optional: export master to Parquet for analysis |
+| Wide feature tables (many columns) | Slow, memory-intensive | Possible but **worse than Parquet** for columnar access | Same | **Recommended**: Parquet for feature training/inference |
+| TF-IDF sparse matrix, large vectors | Not suited for frequent I/O | Not suitable for large blobs | Store as blob or keep on filesystem | **Keep as npz/joblib** + manifest |
+| Online OLTP (orders, sessions) | Not applicable | Fine for single-machine workloads | Migrate when team scales | — |
+
+### 3.2 Recommendation
+
+- **Phase 1**: introduce **SQLite** (or keep CSV + strong manifest) as the **single query source for merchant/review/config data**; **keep spatial wide tables and matrices as files** (Parquet + existing joblib/npz) — don't force thousands of feature columns into SQL.
+- **When to move to PostgreSQL**: when multiple-instance writes, complex permissions, PostGIS in-database geo queries, or managed cloud services are needed.
+- **SQLite is not a silver bullet**: it excels at **structured metadata and relational data**, not columnar analytics. For sklearn pipelines, **pandas + Parquet** is still the smoothest path for wide feature tables.
+
+### 3.3 Sketch SQLite Schema (if adopted)
+
+- `merchants`: `business_id` PK, `name`, `lat`, `lon`, `city`, `state`, `stars`, `review_count`, `is_open`, `categories_json`, …
+- `reviews`: `review_id` PK, `business_id` FK, `text`, `stars`, `date`, … (can sample as needed)
+- `dataset_builds`: `id`, `kind` (spatial_train / retrieval_index), `path`, `checksum`, `created_at`, `git_sha`
+- `model_registry`: `name` (survival / rating), `path`, `feature_schema_hash`, `created_at`
+
+If the spatial feature table has a very large number of columns, store only `business_id` + a few key metrics + a Parquet path in SQLite, and keep the full feature table as a file loaded into memory on demand by the API service.
+
+---
+
+## 4. Target Architecture: Vue Frontend + API + Existing Models
+
+### 4.1 Logical Layers
 
 ```
 Vue SPA (Vite)
     │  HTTPS / JSON
     ▼
-API Gateway (可选)
+API Gateway (optional)
     │
     ▼
-Python API 服务 (推荐 FastAPI)
-    ├── 检索服务：加载 TouristRetrieval / 索引，暴露 POST /search
-    ├── 商家预测服务：加载 SpatialFeatureEngineer + joblib 模型，暴露 POST /merchant/site-score
-    ├── 元数据：GET /health, GET /datasets/active
-    └── （可选）读 SQLite 提供商户详情、分页列表
+Python API Service (FastAPI)
+    ├── Retrieval service: loads TouristRetrieval / index, exposes POST /search
+    ├── Merchant prediction service: loads SpatialFeatureEngineer + joblib models, exposes POST /merchant/site-score
+    ├── Metadata: GET /health, GET /datasets/active
+    └── (optional) reads SQLite to serve merchant details and paginated lists
 ```
 
-### 4.2 与「现有模型」的对接方式
+### 4.2 Wiring to Existing Models
 
-- **检索轨**：启动时 `build_or_load_index`，请求内只做 query + 重排；响应 DTO 与 Vue 表格字段对齐，便于地图等组件复用。
-- **预测轨**：将 `tests/test_inference.py` 等中的逻辑抽成 **纯函数服务层**（`backend/services/merchant_inference.py`），API 只做参数校验、调用、错误映射。
-- **进程与内存**：大 CSV/索引可 **懒加载 + 单例**；多 worker 时注意 **每进程一份内存** 或改用共享只读 mmap（进阶）。
+- **Retrieval track**: `build_or_load_index` at startup; requests only do query + re-ranking. Response DTOs are aligned with Vue table fields so map and list components can share the same data shape.
+- **Prediction track**: the logic from `tests/test_inference.py` has been extracted into a **pure function service layer** (`backend/services/merchant_inference.py`). The API layer only handles parameter validation, dispatch, and error mapping.
+- **Process and memory**: large CSV/index files can be **lazily loaded + singleton**; with multiple workers, note that each worker gets its own copy in memory — consider shared read-only mmap for larger deployments.
 
-### 4.3 API 契约（示例，便于拆任务）
+### 4.3 API Contract (examples, for task breakdown)
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/health` | 版本、依赖数据是否存在 |
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/health` | Version, whether dependent data files exist |
 | POST | `/api/v1/search` | body: `{ "query", "filters", "top_k" }` |
 | POST | `/api/v1/merchant/predict` | body: `{ "city", "lat", "lon", "category_keys": [] }` |
-| GET | `/api/v1/merchants/{business_id}` | 详情（数据来自 SQLite 或 curated） |
+| GET | `/api/v1/merchants/{business_id}` | Merchant detail (from SQLite or curated) |
 
-统一：`application/json`，错误体 `{ "code", "message", "detail" }`。
+All responses use `application/json`; error body is `{ "code", "message", "detail" }`.
 
-### 4.4 Vue 侧建议
+### 4.4 Vue Notes
 
-- **Vite + Vue 3 + TypeScript**；状态可用 Pinia；UI 库任选（Element Plus / Naive UI）。
-- **地图**：MapLibre / Leaflet（与现 Folium 解耦）；坐标与后端一致 WGS84。
-- **与旧 MVP 关系**：Streamlit 已下线；以 **OpenAPI 单源契约** 与 Vue 为准。
-
----
-
-## 5. 分阶段路线图（推荐顺序）
-
-| 阶段 | 内容 | 产出 |
-|------|------|------|
-| **P0** | 数据清单 + manifest；统一 `business_id`；文档化两套 CSV 血缘 | `data/manifests/*` + 本文件 / 未来「项目概述」 |
-| **P1** | 抽出「推理服务模块」无 Streamlit 依赖；单元测试覆盖 predict | `backend/services/*` + pytest |
-| **P2** | FastAPI 最小实现：`/health` + `/merchant/predict` + `/search` | 可 Docker 运行 |
-| **P3** | SQLite 导入 curated 商户（脚本 ETL）；API 读库返回详情 | `scripts/etl_to_sqlite.py` |
-| **P4** | Vue 工程初始化；对接 OpenAPI；替换主流程页面 | 部署静态 + 反向代理 API |
-| **P5** | 特征表 Parquet 化、模型 registry；观测与限流 | 运维就绪 |
+- **Vite + Vue 3 + TypeScript**; state management via Pinia; UI library is open (Element Plus / Naive UI).
+- **Maps**: MapLibre / Leaflet (decoupled from Folium); coordinates in WGS84 matching the backend.
+- **Relation to old MVP**: Streamlit has been decommissioned; Vue + OpenAPI contract is the canonical interface.
 
 ---
 
-## 6. 任务拆分（Epic → 可执行项）
+## 5. Phased Roadmap (Recommended Order)
 
-### Epic A — 数据治理与存储决策
-
-- [x] **A1** 盘点仓库内所有 CSV 路径与消费者（脚本、notebooks、`backend/` 等），输出表格（路径、用途、更新方）。
-- [x] **A2** 数据契约：主键与 A/B 轨规则曾独立成文，现已下线；核心约定保留在本文件 §1–2、§4 与 OpenAPI；完整字段表待新「项目概述」。
-- [x] **A3** 实现 `manifest` 生成步骤（嵌入 `pipelines` 或 `scripts`），CI 可选校验「指针存在」。
-- [ ] **A4** 评审会：确认 **SQLite 范围**（仅主档 vs 含评论）与 **Parquet 范围**（train_spatial）。
-- [x] **A5**（可选）实现 `etl_csv_to_sqlite.py` + 最小 schema + 迁移说明。
-
-### Epic B — 模型与推理服务化
-
-- [x] **B1** 抽取 `merchant_inference.predict(...)`（输入 lat/lon/city/categories，输出概率与星级 + 部分特征）。
-- [x] **B2** 抽取 `retrieval_search.search(...)` 或与 `TouristRetrieval` 薄封装。
-- [x] **B3** 定义 Pydantic 请求/响应模型与 OpenAPI；错误码规范。
-- [x] **B4** FastAPI 路由实现 + 启动文档（含用 `.venv` 避免 NumPy 冲突）。
-- [x] **B5** 容器化 `Dockerfile`（API）+ 数据卷挂载约定。
-
-### Epic C — Vue 前端
-
-- [x] **C1** 初始化 Vue3+TS+Vite 仓库（monorepo 子目录 `frontend/` 或独立 repo 决策）。
-- [x] **C2** 生成 OpenAPI 类型：`frontend/openapi.json` + `npm run gen:api` → `src/api/generated.d.ts`，`src/api/client.ts` 封装 fetch。
-- [x] **C3** 页面：`/` 健康、`/search` 检索表格、`/merchant` 选址表单与结果卡（地图选点留作后续）。
-- [x] **C4** 环境变量：`VITE_API_BASE_URL`；本地 dev proxy。
-- [x] **C5** 构建与部署：`npm run build` → `frontend/dist`；示例 `deploy/nginx-frontend.example.conf`。
-
-### Epic D — 下线与迁移
-
-- [x] **D1** 前端路由与能力由 `frontend/` 与 OpenAPI 体现（独立对照表已下线）。
-- [ ] **D2** 删除或归档死代码路径；维护根 `README` 与（计划中的）`docs/PROJECT_OVERVIEW.md`（或同类「项目概述」）。
-- [ ] **D3**（可选）E2E：Playwright 对关键 API + 页面。
+| Phase | Content | Output |
+|-------|---------|--------|
+| **P0** | Data manifest; unify `business_id`; document lineage of both CSV tracks | `data/manifests/*` + this file / future project overview |
+| **P1** | Extract inference service modules with no Streamlit dependency; unit tests cover predict | `backend/services/*` + pytest |
+| **P2** | Minimal FastAPI: `/health` + `/merchant/predict` + `/search` | Runnable via Docker |
+| **P3** | SQLite ETL for curated merchants; API reads DB to return detail | `scripts/etl_to_sqlite.py` |
+| **P4** | Vue project setup; wire OpenAPI types; replace main flow pages | Static deploy + reverse proxy to API |
+| **P5** | Feature table Parquet migration, model registry; observability and rate limiting | Production-ready |
 
 ---
 
-## 7. 风险与缓解
+## 6. Task Breakdown (Epic → Actionable Items)
 
-- **内存占用**：索引 + 空间参考表同时常驻 → 评估峰值，必要时 **分服务部署**（检索 API 与预测 API 分离）。
-- **数据漂移**：训练特征与线上一致性 → **feature_schema_hash** 写入 manifest，加载时校验。
-- **团队并行**：先锁 **OpenAPI 契约**，前后端可并行；契约变更走版本号 `/v1` → `/v2`。
+### Epic A — Data Governance and Storage Decisions
+
+- [x] **A1** Inventory all CSV paths in the repo and their consumers (scripts, notebooks, `backend/`, etc.); output a table (path, purpose, update method).
+- [x] **A2** Data contract: primary key and A/B track rules were previously documented separately; core conventions are now in this file §1–2, §4, and OpenAPI. Full field table to be added to a new project overview.
+- [x] **A3** Implement manifest generation step (in `pipelines` or `scripts`); CI can optionally validate "pointer exists".
+- [ ] **A4** Review: confirm **SQLite scope** (merchant master only vs. including reviews) and **Parquet scope** (train_spatial).
+- [x] **A5** (optional) Implement `etl_csv_to_sqlite.py` + minimal schema + migration notes.
+
+### Epic B — Model and Inference Service Extraction
+
+- [x] **B1** Extract `merchant_inference.predict(...)` (inputs: lat/lon/city/categories; outputs: probability + stars + select features).
+- [x] **B2** Extract `retrieval_search.search(...)` or thin wrapper around `TouristRetrieval`.
+- [x] **B3** Define Pydantic request/response models and OpenAPI; standardize error codes.
+- [x] **B4** FastAPI route implementation + startup docs (including using `.venv` to avoid NumPy conflicts).
+- [x] **B5** Containerize `Dockerfile` (API) + data volume mount conventions.
+
+### Epic C — Vue Frontend
+
+- [x] **C1** Initialize Vue 3 + TS + Vite project (`frontend/` subdirectory vs. separate repo decision).
+- [x] **C2** Generate OpenAPI types: `frontend/openapi.json` + `npm run gen:api` → `src/api/generated.d.ts`; `src/api/client.ts` wraps fetch.
+- [x] **C3** Pages: `/` health check, `/search` retrieval results table, `/merchant` site analysis form and result card (map pin selection as follow-up).
+- [x] **C4** Environment variables: `VITE_API_BASE_URL`; local dev proxy.
+- [x] **C5** Build and deploy: `npm run build` → `frontend/dist`; example `deploy/nginx-frontend.example.conf`.
+
+### Epic D — Decommission and Migration
+
+- [x] **D1** Frontend routing and capabilities now live in `frontend/` and OpenAPI (standalone comparison tables decommissioned).
+- [ ] **D2** Delete or archive dead code paths; maintain root `README` and (planned) `docs/PROJECT_OVERVIEW.md`.
+- [ ] **D3** (optional) E2E: Playwright for critical API + page flows.
 
 ---
 
-## 8. 文档维护
+## 7. Risks and Mitigations
 
-- 本文档路径：`docs/refactor-plan-data-vue-api.md`（**`docs/` 下唯一长期保留的规划/迁移说明**）。
-- **实际表结构、API 基址、环境变量**：维护在根目录 `README.md`；字段级请求/响应以 OpenAPI 为准。若需要对外/答辩用的一页纸说明，可新增 `docs/PROJECT_OVERVIEW.md`（名称自定），不必再拆多份旧式长文。
+- **Memory footprint**: index + spatial reference table both resident → benchmark peak usage; consider **splitting services** if needed (separate retrieval API and prediction API).
+- **Data drift**: training features vs. online features consistency → write **feature_schema_hash** into the manifest and validate at load time.
+- **Parallel team work**: lock the **OpenAPI contract first** so frontend and backend can develop in parallel; contract changes go through version numbers `/v1` → `/v2`.
 
 ---
 
-*文档版本：初稿，供评审与拆 sprint；可根据团队规模删减 P3/P5。*
+## 8. Document Maintenance
+
+- This document lives at `docs/refactor-plan-data-vue-api.md` (**the only long-lived planning/migration doc in `docs/`**).
+- **Actual table schemas, API base URLs, and environment variables**: maintained in the root `README.md`. Field-level request/response contracts live in OpenAPI. A one-page project overview can be added at `docs/PROJECT_OVERVIEW.md` if needed for external presentations.
+
+---
+
+*Document version: initial draft, for sprint review and task breakdown. P3/P5 can be trimmed depending on team size.*

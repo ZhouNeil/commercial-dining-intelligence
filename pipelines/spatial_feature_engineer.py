@@ -16,6 +16,7 @@ class SpatialFeatureEngineer:
 
     def compute_local_features(self, target_coords, target_cats, ref_tree, ref_cats, ref_stars, ref_surv, ref_revs, exclude_self=False):
         MAX_RADIUS_KM = 3.0
+        # BallTree haversine metric expects radians; divide km by Earth's radius.
         max_rad = MAX_RADIUS_KM / 6371.0
         M = len(target_coords)
         
@@ -52,6 +53,7 @@ class SpatialFeatureEngineer:
                 
             neighbor_cats_mx = ref_cats[idxs_3km]
             point_cat = target_cats[i]
+            # Vectorized set-intersection: dot product > 0 means at least one shared category.
             shared_mask_3km = (neighbor_cats_mx @ point_cat) > 0
             
             same_cat_idxs_3km = idxs_3km[shared_mask_3km]
@@ -149,6 +151,7 @@ class SpatialFeatureEngineer:
         
         print(f"Train size: {len(train_df)}, Test size: {len(test_df)}")
         
+        # BallTree with haversine metric requires coordinates in radians, not degrees.
         train_coords = np.radians(train_df[['latitude', 'longitude']].values)
         train_tree = BallTree(train_coords, metric='haversine')
         

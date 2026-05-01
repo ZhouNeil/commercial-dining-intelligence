@@ -444,7 +444,7 @@
               }
             ],
             "title": "City",
-            "description": "过滤参考商户；为空则取表头前 N 行"
+            "description": "Filter reference merchants; if empty, use the first N rows"
           },
           "state": {
             "anyOf": [
@@ -702,13 +702,13 @@
           "query": {
             "type": "string",
             "title": "Query",
-            "description": "Step2 自然语言；discover_only 时可空",
+            "description": "Step 2 natural language query; may be empty when discover_only is true",
             "default": ""
           },
           "state": {
             "type": "string",
             "title": "State",
-            "description": "USPS 州码"
+            "description": "USPS two-letter state code"
           },
           "city": {
             "anyOf": [
@@ -720,7 +720,7 @@
               }
             ],
             "title": "City",
-            "description": "可选城市名（精确匹配）"
+            "description": "Optional city name (exact match)"
           },
           "top_k": {
             "type": "integer",
@@ -741,7 +741,7 @@
               }
             ],
             "title": "Pool K",
-            "description": "内部候选池 Top-N（前端默认 45）"
+            "description": "Internal candidate pool size Top-N (frontend default 45)"
           },
           "keywords_extra": {
             "anyOf": [
@@ -753,7 +753,7 @@
               }
             ],
             "title": "Keywords Extra",
-            "description": "额外关键词"
+            "description": "Additional keywords to boost retrieval"
           },
           "force_rebuild_index": {
             "type": "boolean",
@@ -772,7 +772,7 @@
             },
             "type": "array",
             "title": "Cuisines",
-            "description": "菜系多选：Sushi, Steakhouse, Korean, …"
+            "description": "Multi-select cuisine filters: Sushi, Steakhouse, Korean, ..."
           },
           "w_semantic": {
             "type": "number",
@@ -829,7 +829,7 @@
           "state"
         ],
         "title": "SearchRequest",
-        "description": "与前端 `/search`（Step1–2 与侧栏权重）对齐的检索请求字段。"
+        "description": "Search request fields aligned with the frontend /search flow (Step 1-2 and sidebar weight sliders)."
       },
       "SearchResponse": {
         "properties": {
