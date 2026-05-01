@@ -81,13 +81,32 @@ commercial-dining-intelligence/
 
 ## 📥 Data Setup
 
-Due to the massive size of the Yelp Open Dataset, raw and cleaned data files are **not** tracked in this GitHub repository. To run this project, you must manually download the required CSV files.
+This repository does not include the runtime data and model artifacts.
 
-**1. Download the Data:**
-* Fetch the cleaned dataset (e.g., `output_philly.csv`) from our team's shared Google: [`https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing`](https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing)
+Push the code to GitHub, but upload these two folders to Google Drive:
 
-**2. Place it in the Repo:**
-* Move the downloaded files directly into the `data/processed_csv/` folder. Do not force-add data files to Git.
+1. `data/`
+2. `models/artifacts/`
+
+Google Drive folder:
+[`https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing`](https://drive.google.com/drive/folders/1iqaBfD71GEfOnLrj7LzczDSLWwzz8Awd?usp=sharing)
+
+When setting up the project on a new machine or deployment target:
+
+1. Clone the repository from GitHub.
+2. Download `data/` from Google Drive and place it at the repo root.
+3. Download `artifacts/` from Google Drive and place it under `models/artifacts/`.
+
+The final local structure should look like this:
+
+```text
+commercial-dining-intelligence/
+├── data/
+└── models/
+    └── artifacts/
+```
+
+Do not upload large datasets or trained model files to GitHub.
 
 ## 🚀 Setup Environment
 
